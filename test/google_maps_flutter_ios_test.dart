@@ -7,13 +7,12 @@ import 'package:async/async.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:google_maps_flutter_ios/google_maps_flutter_ios.dart';
-import 'package:google_maps_flutter_ios/src/messages.g.dart';
 import 'package:google_maps_flutter_platform_interface/google_maps_flutter_platform_interface.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 
 import 'google_maps_flutter_ios_test.mocks.dart';
+import 'package_specific_test_import.dart';
 
 @GenerateNiceMocks(<MockSpec<Object>>[MockSpec<MapsApi>()])
 void main() {

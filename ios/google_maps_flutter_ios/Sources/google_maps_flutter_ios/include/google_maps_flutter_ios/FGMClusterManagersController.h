@@ -4,9 +4,9 @@
 
 @import Flutter;
 @import GoogleMaps;
-@import GoogleMapsUtils;
 
 #import "FGMMapEventDelegate.h"
+#import "GoogleMapsUtilsTrampoline.h"
 #import "google_maps_flutter_pigeon_messages.g.h"
 
 NS_ASSUME_NONNULL_BEGIN

@@ -16,6 +16,9 @@ import 'package:pigeon/pigeon.dart';
         'ios/google_maps_flutter_ios/Sources/google_maps_flutter_ios/google_maps_flutter_pigeon_messages.g.m',
     objcOptions: ObjcOptions(prefix: 'FGM'),
     copyrightHeader: 'pigeons/copyright.txt',
+    // Use the base package name so that the generated code can be shared
+    // across the implementation copies.
+    dartPackageName: 'google_maps_flutter_ios',
   ),
 )
 /// Pigeon equivalent of MapType
