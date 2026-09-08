@@ -12,6 +12,7 @@
 #import "FGMGroundOverlayController.h"
 #import "FGMHeatmapController.h"
 #import "FGMMarkerUserData.h"
+#import "FGMPerf.h"
 #import "FGMTileOverlayController.h"
 #import "google_maps_flutter_pigeon_messages.g.h"
 
@@ -703,12 +704,23 @@
                      changing:(nonnull NSArray<FGMPlatformMarker *> *)toChange
                      removing:(nonnull NSArray<NSString *> *)idsToRemove
                         error:(FlutterError *_Nullable __autoreleasing *_Nonnull)error {
+  FGMPerfBeginBatch(toAdd.count, toChange.count, idsToRemove.count);
+  CFTimeInterval perfPassStart = FGMPerfNow();
   [self.controller.markersController addMarkers:toAdd];
+  FGMPerfRecordPass(FGMPerfPassAdd, perfPassStart);
+  perfPassStart = FGMPerfNow();
   [self.controller.markersController changeMarkers:toChange];
+  FGMPerfRecordPass(FGMPerfPassChange, perfPassStart);
+  perfPassStart = FGMPerfNow();
   [self.controller.markersController removeMarkersWithIdentifiers:idsToRemove];
+  FGMPerfRecordPass(FGMPerfPassRemove, perfPassStart);
 
   // Invoke clustering after markers are added.
+  perfPassStart = FGMPerfNow();
   [self.controller.clusterManagersController invokeClusteringForEachClusterManager];
+  FGMPerfRecordPass(FGMPerfPassClusterInvoke, perfPassStart);
+  FGMPerfAccumulateSince(FGMPerfPhaseCluster, perfPassStart);
+  FGMPerfEndBatch(self.controller.markersController.markerCount);
 }
 
 - (void)updateClusterManagersByAdding:(nonnull NSArray<FGMPlatformClusterManager *> *)toAdd

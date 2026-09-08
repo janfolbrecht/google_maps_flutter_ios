@@ -8,6 +8,7 @@
 #import "FGMConversionUtils.h"
 #import "FGMImageUtils.h"
 #import "FGMMarkerUserData.h"
+#import "FGMPerf.h"
 
 @interface FGMMarkerController ()
 
@@ -50,7 +51,9 @@
 }
 
 - (void)removeMarker {
+  CFTimeInterval perfStart = FGMPerfNow();
   self.marker.map = nil;
+  FGMPerfAccumulateSince(FGMPerfPhaseMapNil, perfStart);
 }
 
 - (void)updateFromPlatformMarker:(FGMPlatformMarker *)platformMarker
@@ -80,10 +83,19 @@
                 assetProvider:(NSObject<FGMAssetProvider> *)assetProvider
                   screenScale:(CGFloat)screenScale
     usingOpacityForVisibility:(BOOL)useOpacityForVisibility {
+  // FGMPerf: wall time of this method minus the icon and map-set phases is "update_rest".
+  CFTimeInterval perfUpdateStart = FGMPerfNow();
+  CFTimeInterval perfIconSeconds = 0;
+  CFTimeInterval perfMapSetSeconds = 0;
   marker.groundAnchor = FGMGetCGPointForPigeonPoint(platformMarker.anchor);
   marker.draggable = platformMarker.draggable;
+  CFTimeInterval perfIconStart = FGMPerfNow();
   UIImage *image = FGMIconFromBitmap(platformMarker.icon, assetProvider, screenScale);
   marker.icon = image;
+  if (FGMPerfEnabled()) {
+    perfIconSeconds = FGMPerfNow() - perfIconStart;
+    FGMPerfAccumulate(FGMPerfIconPhaseForBitmap(platformMarker.icon), perfIconSeconds);
+  }
   marker.flat = platformMarker.flat;
   marker.position = FGMGetCoordinateForPigeonLatLng(platformMarker.position);
   marker.rotation = platformMarker.rotation;
@@ -106,7 +118,16 @@
     marker.opacity = platformMarker.visible ? platformMarker.alpha : 0.0f;
   } else {
     marker.opacity = platformMarker.alpha;
+    CFTimeInterval perfMapSetStart = FGMPerfNow();
     marker.map = platformMarker.visible ? mapView : nil;
+    if (FGMPerfEnabled()) {
+      perfMapSetSeconds = FGMPerfNow() - perfMapSetStart;
+      FGMPerfAccumulate(FGMPerfPhaseMapSet, perfMapSetSeconds);
+    }
+  }
+  if (FGMPerfEnabled()) {
+    FGMPerfAccumulate(FGMPerfPhaseUpdateRest,
+                      FGMPerfNow() - perfUpdateStart - perfIconSeconds - perfMapSetSeconds);
   }
 }
 
@@ -154,9 +175,11 @@
   CLLocationCoordinate2D position = FGMGetCoordinateForPigeonLatLng(markerToAdd.position);
   NSString *markerIdentifier = markerToAdd.markerId;
   NSString *clusterManagerIdentifier = markerToAdd.clusterManagerId;
+  CFTimeInterval perfAllocStart = FGMPerfNow();
   GMSMarker *marker = (self.markerType == FGMPlatformMarkerTypeAdvancedMarker)
                           ? [GMSAdvancedMarker markerWithPosition:position]
                           : [GMSMarker markerWithPosition:position];
+  FGMPerfAccumulateSince(FGMPerfPhaseAlloc, perfAllocStart);
   FGMMarkerController *controller = [[FGMMarkerController alloc] initWithMarker:marker
                                                                markerIdentifier:markerIdentifier
                                                                         mapView:self.mapView];
@@ -164,11 +187,13 @@
                          assetProvider:self.assetProvider
                            screenScale:[self getScreenScale]];
   if (clusterManagerIdentifier) {
+    CFTimeInterval perfClusterStart = FGMPerfNow();
     GMUClusterManager *clusterManager =
         [_clusterManagersController clusterManagerWithIdentifier:clusterManagerIdentifier];
     if ([marker conformsToProtocol:@protocol(GMUClusterItem)]) {
       [clusterManager addItem:(id<GMUClusterItem>)marker];
     }
+    FGMPerfAccumulateSince(FGMPerfPhaseCluster, perfClusterStart);
   }
   self.markerIdentifierToController[markerIdentifier] = controller;
 }
@@ -194,6 +219,7 @@
                            screenScale:[self getScreenScale]];
 
   if ([controller.marker conformsToProtocol:@protocol(GMUClusterItem)]) {
+    CFTimeInterval perfClusterStart = FGMPerfNow();
     if (previousClusterManagerIdentifier &&
         ![clusterManagerIdentifier isEqualToString:previousClusterManagerIdentifier]) {
       // Remove marker from previous cluster manager if its cluster manager identifier is removed or
@@ -210,6 +236,7 @@
           [_clusterManagersController clusterManagerWithIdentifier:clusterManagerIdentifier];
       [clusterManager addItem:(id<GMUClusterItem>)controller.marker];
     }
+    FGMPerfAccumulateSince(FGMPerfPhaseCluster, perfClusterStart);
   }
 }
 
@@ -226,13 +253,19 @@
   }
   NSString *clusterManagerIdentifier = [controller clusterManagerIdentifier];
   if (clusterManagerIdentifier) {
+    CFTimeInterval perfClusterStart = FGMPerfNow();
     GMUClusterManager *clusterManager =
         [_clusterManagersController clusterManagerWithIdentifier:clusterManagerIdentifier];
     [clusterManager removeItem:(id<GMUClusterItem>)controller.marker];
+    FGMPerfAccumulateSince(FGMPerfPhaseCluster, perfClusterStart);
   } else {
     [controller removeMarker];
   }
   [self.markerIdentifierToController removeObjectForKey:identifier];
+}
+
+- (NSUInteger)markerCount {
+  return self.markerIdentifierToController.count;
 }
 
 - (BOOL)didTapMarkerWithIdentifier:(NSString *)identifier {

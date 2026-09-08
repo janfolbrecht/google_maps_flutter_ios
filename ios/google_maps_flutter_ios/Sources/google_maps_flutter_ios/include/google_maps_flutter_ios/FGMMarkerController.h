@@ -35,6 +35,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)addMarkers:(NSArray<FGMPlatformMarker *> *)markersToAdd;
 - (void)changeMarkers:(NSArray<FGMPlatformMarker *> *)markersToChange;
 - (void)removeMarkersWithIdentifiers:(NSArray<NSString *> *)identifiers;
+/// Number of markers currently held by the controller. RedMap fork addition, used by FGMPerf.
+- (NSUInteger)markerCount;
 - (BOOL)didTapMarkerWithIdentifier:(NSString *)identifier;
 - (void)didStartDraggingMarkerWithIdentifier:(NSString *)identifier
                                     location:(CLLocationCoordinate2D)coordinate;
