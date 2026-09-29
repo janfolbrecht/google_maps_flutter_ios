@@ -6,8 +6,31 @@
 
 #import "FGMImageUtils.h"
 #import "FGMConversionUtils.h"
+#import "FGMOptimizations.h"
 
 @import Foundation;
+
+#import <CommonCrypto/CommonDigest.h>
+#import <objc/runtime.h>
+
+/// RedMap fork, FGM_OPT_ICON_CACHE: the number of images one asset provider's cache keeps.
+static const NSUInteger kFGMIconCacheCountLimit = 256;
+
+/// Returns the key under which the image of the bitmap is cached: everything that decides what
+/// FGMUncachedIconFromBitmap returns for it. Returns nil for a bitmap that is not cached.
+static NSString *FGMIconCacheKey(id bitmap, CGFloat screenScale);
+
+/// Returns the image cache of the asset provider, creating it on first use.
+///
+/// The cache belongs to the asset provider because the provider decides which image an asset name
+/// stands for; it lives as long as the provider, that is, as long as the map.
+static NSCache<NSString *, UIImage *> *FGMIconCacheForAssetProvider(
+    NSObject<FGMAssetProvider> *assetProvider);
+
+/// Creates a UIImage from Pigeon bitmap. This is the upstream FGMIconFromBitmap.
+static UIImage *FGMUncachedIconFromBitmap(FGMPlatformBitmap *platformBitmap,
+                                          NSObject<FGMAssetProvider> *assetProvider,
+                                          CGFloat screenScale);
 
 /// This method is deprecated within the context of `BitmapDescriptor.fromBytes` handling in the
 /// flutter google_maps_flutter_platform_interface package which has been replaced by 'bytes'
@@ -48,6 +71,88 @@ static UIImage *scaledImageWithWidthHeight(UIImage *image, NSNumber *width, NSNu
 
 UIImage *FGMIconFromBitmap(FGMPlatformBitmap *platformBitmap,
                            NSObject<FGMAssetProvider> *assetProvider, CGFloat screenScale) {
+  NSString *cacheKey = nil;
+  if (FGMOptIconCacheEnabled() && assetProvider) {
+    cacheKey = FGMIconCacheKey(platformBitmap.bitmap, screenScale);
+  }
+  if (!cacheKey) {
+    return FGMUncachedIconFromBitmap(platformBitmap, assetProvider, screenScale);
+  }
+  NSCache<NSString *, UIImage *> *cache = FGMIconCacheForAssetProvider(assetProvider);
+  UIImage *image = [cache objectForKey:cacheKey];
+  if (!image) {
+    image = FGMUncachedIconFromBitmap(platformBitmap, assetProvider, screenScale);
+    if (image) {
+      [cache setObject:image forKey:cacheKey];
+    }
+  }
+  return image;
+}
+
+static NSCache<NSString *, UIImage *> *FGMIconCacheForAssetProvider(
+    NSObject<FGMAssetProvider> *assetProvider) {
+  static char cacheAssociationKey;
+  NSCache<NSString *, UIImage *> *cache =
+      objc_getAssociatedObject(assetProvider, &cacheAssociationKey);
+  if (!cache) {
+    cache = [[NSCache alloc] init];
+    cache.countLimit = kFGMIconCacheCountLimit;
+    objc_setAssociatedObject(assetProvider, &cacheAssociationKey, cache,
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  }
+  return cache;
+}
+
+/// Returns the SHA-256 of the data and its length as text. `-[NSData hash]` reads only the first
+/// bytes, which images of one format share.
+static NSString *FGMDigestOfData(NSData *data) {
+  unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+  CC_SHA256(data.bytes, (CC_LONG)data.length, digest);
+  NSData *digestData = [NSData dataWithBytes:digest length:sizeof(digest)];
+  return [NSString stringWithFormat:@"%@/%lu", [digestData base64EncodedStringWithOptions:0],
+                                    (unsigned long)data.length];
+}
+
+static NSString *FGMIconCacheKey(id bitmap, CGFloat screenScale) {
+  // A nil width or height means "as the image is" and is a different image from any number, so
+  // it is written as "nil", never as 0. The screen scale is part of every key that depends on it.
+  if ([bitmap isKindOfClass:[FGMPlatformBitmapDefaultMarker class]]) {
+    FGMPlatformBitmapDefaultMarker *bitmapDefaultMarker = bitmap;
+    return [NSString stringWithFormat:@"default:%.17g", bitmapDefaultMarker.hue.doubleValue];
+  } else if ([bitmap isKindOfClass:[FGMPlatformBitmapAsset class]]) {
+    FGMPlatformBitmapAsset *bitmapAsset = bitmap;
+    return [NSString
+        stringWithFormat:@"asset:%@:%@:%.17g", bitmapAsset.name, bitmapAsset.pkg, screenScale];
+  } else if ([bitmap isKindOfClass:[FGMPlatformBitmapAssetImage class]]) {
+    FGMPlatformBitmapAssetImage *bitmapAssetImage = bitmap;
+    return [NSString stringWithFormat:@"assetImage:%@:%.17g:%.17g", bitmapAssetImage.name,
+                                      bitmapAssetImage.scale, screenScale];
+  } else if ([bitmap isKindOfClass:[FGMPlatformBitmapBytes class]]) {
+    FGMPlatformBitmapBytes *bitmapBytes = bitmap;
+    return [NSString stringWithFormat:@"bytes:%@:%.17g",
+                                      FGMDigestOfData(bitmapBytes.byteData.data), screenScale];
+  } else if ([bitmap isKindOfClass:[FGMPlatformBitmapAssetMap class]]) {
+    FGMPlatformBitmapAssetMap *bitmapAssetMap = bitmap;
+    return [NSString stringWithFormat:@"assetMap:%@:%ld:%.17g:%@:%@:%.17g",
+                                      bitmapAssetMap.assetName, (long)bitmapAssetMap.bitmapScaling,
+                                      bitmapAssetMap.imagePixelRatio, bitmapAssetMap.width,
+                                      bitmapAssetMap.height, screenScale];
+  } else if ([bitmap isKindOfClass:[FGMPlatformBitmapBytesMap class]]) {
+    FGMPlatformBitmapBytesMap *bitmapBytesMap = bitmap;
+    return [NSString stringWithFormat:@"bytesMap:%@:%ld:%.17g:%@:%@:%.17g",
+                                      FGMDigestOfData(bitmapBytesMap.byteData.data),
+                                      (long)bitmapBytesMap.bitmapScaling,
+                                      bitmapBytesMap.imagePixelRatio, bitmapBytesMap.width,
+                                      bitmapBytesMap.height, screenScale];
+  }
+  // A pin configuration belongs to advanced markers and is made of colours and a glyph; its
+  // glyph bitmap, if it has one, is cached through the recursion.
+  return nil;
+}
+
+static UIImage *FGMUncachedIconFromBitmap(FGMPlatformBitmap *platformBitmap,
+                                          NSObject<FGMAssetProvider> *assetProvider,
+                                          CGFloat screenScale) {
   assert(screenScale > 0 && "Screen scale must be greater than 0");
   // See comment in messages.dart for why this is so loosely typed. See also
   // https://github.com/flutter/flutter/issues/117819.

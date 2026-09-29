@@ -16,4 +16,8 @@ NS_ASSUME_NONNULL_BEGIN
 /// that the SDK rebuilds its accessibility items once per batch instead of once per marker.
 BOOL FGMOptAccessibilityBatchEnabled(void);
 
+/// `FGM_OPT_ICON_CACHE`: keep the image made from a bitmap descriptor and hand the same `UIImage`
+/// to every marker that asks for an equal descriptor, instead of making it again per marker.
+BOOL FGMOptIconCacheEnabled(void);
+
 NS_ASSUME_NONNULL_END

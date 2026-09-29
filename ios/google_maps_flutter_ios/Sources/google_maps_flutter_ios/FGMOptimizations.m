@@ -19,3 +19,12 @@ BOOL FGMOptAccessibilityBatchEnabled(void) {
   });
   return enabled;
 }
+
+BOOL FGMOptIconCacheEnabled(void) {
+  static BOOL enabled;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    enabled = FGMOptIsOn(@"FGM_OPT_ICON_CACHE");
+  });
+  return enabled;
+}

@@ -26,8 +26,9 @@ BOOL FGMPerfEnabled(void) {
     NSString *value = NSProcessInfo.processInfo.environment[@"FGM_PERF"];
     enabled = [value isEqualToString:@"1"];
     if (enabled) {
-      NSLog(@"[FGMPerf] enabled=1 clock=CACurrentMediaTime units=ms opt_ax_batch=%d",
-            FGMOptAccessibilityBatchEnabled());
+      NSLog(@"[FGMPerf] enabled=1 clock=CACurrentMediaTime units=ms opt_ax_batch=%d "
+            @"opt_icon_cache=%d",
+            FGMOptAccessibilityBatchEnabled(), FGMOptIconCacheEnabled());
     }
   });
   return enabled;
