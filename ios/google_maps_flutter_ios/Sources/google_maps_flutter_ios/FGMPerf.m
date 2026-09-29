@@ -7,6 +7,8 @@
 
 #import "FGMPerf.h"
 
+#import "FGMOptimizations.h"
+
 // Per-batch accumulators. The plugin touches markers only on the main thread (a GoogleMaps SDK
 // requirement), so plain statics are sufficient; no locking.
 static CFTimeInterval gPhaseSeconds[FGMPerfPhaseCount];
@@ -24,7 +26,8 @@ BOOL FGMPerfEnabled(void) {
     NSString *value = NSProcessInfo.processInfo.environment[@"FGM_PERF"];
     enabled = [value isEqualToString:@"1"];
     if (enabled) {
-      NSLog(@"[FGMPerf] enabled=1 clock=CACurrentMediaTime units=ms");
+      NSLog(@"[FGMPerf] enabled=1 clock=CACurrentMediaTime units=ms opt_ax_batch=%d",
+            FGMOptAccessibilityBatchEnabled());
     }
   });
   return enabled;
@@ -116,7 +119,8 @@ void FGMPerfEndBatch(NSUInteger totalMarkers) {
         @"map_nil_ms=%.2f map_nil_n=%lu "
         @"update_rest_ms=%.2f update_rest_n=%lu "
         @"cluster_ms=%.2f cluster_n=%lu "
-        @"unaccounted_ms=%.2f",
+        @"unaccounted_ms=%.2f "
+        @"ax_refresh_ms=%.2f ax_refresh_n=%lu",
         (unsigned long)gBatchSequence, FGMPerfMilliseconds(total), gapMs, (unsigned long)gToAdd,
         (unsigned long)gToChange, (unsigned long)gToRemove, (unsigned long)totalMarkers,
         FGMPerfMilliseconds(gPassSeconds[FGMPerfPassAdd]),
@@ -141,5 +145,7 @@ void FGMPerfEndBatch(NSUInteger totalMarkers) {
         (unsigned long)gPhaseCalls[FGMPerfPhaseUpdateRest],
         FGMPerfMilliseconds(gPhaseSeconds[FGMPerfPhaseCluster]),
         (unsigned long)gPhaseCalls[FGMPerfPhaseCluster],
-        FGMPerfMilliseconds(total - accounted));
+        FGMPerfMilliseconds(total - accounted),
+        FGMPerfMilliseconds(gPhaseSeconds[FGMPerfPhaseAccessibilityRefresh]),
+        (unsigned long)gPhaseCalls[FGMPerfPhaseAccessibilityRefresh]);
 }

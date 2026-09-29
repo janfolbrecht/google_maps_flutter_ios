@@ -12,6 +12,7 @@
 #import "FGMGroundOverlayController.h"
 #import "FGMHeatmapController.h"
 #import "FGMMarkerUserData.h"
+#import "FGMOptimizations.h"
 #import "FGMPerf.h"
 #import "FGMTileOverlayController.h"
 #import "google_maps_flutter_pigeon_messages.g.h"
@@ -705,6 +706,17 @@
                      removing:(nonnull NSArray<NSString *> *)idsToRemove
                         error:(FlutterError *_Nullable __autoreleasing *_Nonnull)error {
   FGMPerfBeginBatch(toAdd.count, toChange.count, idsToRemove.count);
+  // RedMap fork, FGM_OPT_AX_BATCH. While the map's accessibility elements are enabled, the SDK
+  // rebuilds the accessibility items of every marker on the map after each single marker attached
+  // or detached, which makes a batch quadratic in the number of markers. With the elements hidden
+  // it only keeps its list of them, so they are hidden for the length of the batch.
+  GMSMapView *mapView = self.controller.mapView;
+  BOOL batchesAccessibility = FGMOptAccessibilityBatchEnabled() &&
+                              !mapView.accessibilityElementsHidden &&
+                              (toAdd.count > 0 || toChange.count > 0 || idsToRemove.count > 0);
+  if (batchesAccessibility) {
+    mapView.accessibilityElementsHidden = YES;
+  }
   CFTimeInterval perfPassStart = FGMPerfNow();
   [self.controller.markersController addMarkers:toAdd];
   FGMPerfRecordPass(FGMPerfPassAdd, perfPassStart);
@@ -720,6 +732,17 @@
   [self.controller.clusterManagersController invokeClusteringForEachClusterManager];
   FGMPerfRecordPass(FGMPerfPassClusterInvoke, perfPassStart);
   FGMPerfAccumulateSince(FGMPerfPhaseCluster, perfPassStart);
+  if (batchesAccessibility) {
+    mapView.accessibilityElementsHidden = NO;
+    // The SDK brings its accessibility items up to date only when an overlay is attached or
+    // detached or when the camera moves. Attaching and detaching a marker that is never drawn
+    // makes it do so now, so that VoiceOver finds the markers of this batch.
+    CFTimeInterval perfRefreshStart = FGMPerfNow();
+    GMSMarker *refreshMarker = [[GMSMarker alloc] init];
+    refreshMarker.map = mapView;
+    refreshMarker.map = nil;
+    FGMPerfAccumulateSince(FGMPerfPhaseAccessibilityRefresh, perfRefreshStart);
+  }
   FGMPerfEndBatch(self.controller.markersController.markerCount);
 }
 

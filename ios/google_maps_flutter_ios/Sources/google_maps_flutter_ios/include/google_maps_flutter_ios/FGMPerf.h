@@ -39,6 +39,8 @@ typedef NS_ENUM(NSUInteger, FGMPerfPhase) {
   FGMPerfPhaseUpdateRest,
   /// Cluster manager work: `addItem:` / `removeItem:` per marker plus the final `cluster` call.
   FGMPerfPhaseCluster,
+  /// The single refresh of the SDK's accessibility items after a batch (`FGM_OPT_AX_BATCH`).
+  FGMPerfPhaseAccessibilityRefresh,
   FGMPerfPhaseCount
 };
 
