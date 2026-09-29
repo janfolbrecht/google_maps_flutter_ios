@@ -445,6 +445,130 @@ import Testing
     #expect(!FGMIsScalableWithScaleFactorFromSize(originalSize, targetSize))
   }
 
+  // RedMap fork, FGM_OPT_ICON_CACHE.
+
+  @Test func iconCacheSharesOneImageAmongEqualDescriptors() {
+    let assetName = "fakeImageName"
+    let assetProvider = TestAssetProvider(
+      image: createOnePixelImage(), forAssetName: assetName, package: nil)
+    // Two descriptors, as two markers send them, not one object twice.
+    let first = FGMIconFromBitmap(
+      FGMPlatformBitmap.make(withBitmap: assetBitmap(assetName, width: 15, height: 45)),
+      assetProvider, 3.0)
+    let second = FGMIconFromBitmap(
+      FGMPlatformBitmap.make(withBitmap: assetBitmap(assetName, width: 15, height: 45)),
+      assetProvider, 3.0)
+
+    #expect(first != nil)
+    #expect(first === second)
+  }
+
+  @Test func iconCacheKeepsDifferentDescriptorsApart() throws {
+    let assetName = "fakeImageName"
+    let assetProvider = TestAssetProvider(
+      image: createOnePixelImage(), forAssetName: assetName, package: nil)
+    func icon(_ bitmap: FGMPlatformBitmapAssetMap, screenScale: CGFloat = 3.0) -> UIImage? {
+      return FGMIconFromBitmap(FGMPlatformBitmap.make(withBitmap: bitmap), assetProvider, screenScale)
+    }
+
+    let unsized = try #require(icon(assetBitmap(assetName, width: nil, height: nil)))
+    let narrow = try #require(icon(assetBitmap(assetName, width: 10, height: nil)))
+    let wide = try #require(icon(assetBitmap(assetName, width: 20, height: nil)))
+    let tall = try #require(icon(assetBitmap(assetName, width: nil, height: 20)))
+    let dense = try #require(icon(assetBitmap(assetName, width: nil, height: nil, ratio: 2)))
+    let unscaled = try #require(
+      icon(assetBitmap(assetName, width: 10, height: nil, scaling: .none)))
+    let otherScreen = try #require(
+      icon(assetBitmap(assetName, width: 10, height: nil), screenScale: 2.0))
+
+    #expect(unsized.size == CGSize(width: 1, height: 1))
+    #expect(narrow.size == CGSize(width: 10, height: 10))
+    #expect(wide.size == CGSize(width: 20, height: 20))
+    #expect(tall.size == CGSize(width: 20, height: 20))
+    #expect(dense.scale == 2)
+    #expect(unscaled.size == CGSize(width: 1, height: 1))
+    // Equal in size is not the same image: the key tells a width from a height, and one screen
+    // from another.
+    #expect(wide !== tall)
+    #expect(narrow !== otherScreen)
+  }
+
+  @Test func iconCacheBelongsToTheAssetProvider() throws {
+    let assetName = "fakeImageName"
+    let small = TestAssetProvider(
+      image: createImage(side: 1, color: .white), forAssetName: assetName, package: nil)
+    let large = TestAssetProvider(
+      image: createImage(side: 4, color: .white), forAssetName: assetName, package: nil)
+    let bitmap = assetBitmap(assetName, width: nil, height: nil)
+
+    let fromSmall = try #require(
+      FGMIconFromBitmap(FGMPlatformBitmap.make(withBitmap: bitmap), small, 3.0))
+    let fromLarge = try #require(
+      FGMIconFromBitmap(FGMPlatformBitmap.make(withBitmap: bitmap), large, 3.0))
+
+    #expect(fromSmall.size == CGSize(width: 1, height: 1))
+    #expect(fromLarge.size == CGSize(width: 4, height: 4))
+  }
+
+  @Test func iconCacheTellsBytesApartByContent() throws {
+    let assetProvider = TestAssetProvider()
+    func icon(_ image: UIImage) throws -> UIImage {
+      let bitmap = FGMPlatformBitmapBytesMap.make(
+        withByteData: FlutterStandardTypedData(bytes: try #require(image.pngData())),
+        bitmapScaling: .auto,
+        imagePixelRatio: 1,
+        width: nil,
+        height: nil
+      )
+      return try #require(
+        FGMIconFromBitmap(FGMPlatformBitmap.make(withBitmap: bitmap), assetProvider, 3.0))
+    }
+
+    let white = try icon(createImage(side: 2, color: .white))
+    let whiteAgain = try icon(createImage(side: 2, color: .white))
+    let red = try icon(createImage(side: 2, color: .red))
+
+    #expect(white === whiteAgain)
+    #expect(white !== red)
+    #expect(try pixel(of: red) != pixel(of: white))
+  }
+
+  private func assetBitmap(
+    _ assetName: String, width: NSNumber?, height: NSNumber?, ratio: Double = 1,
+    scaling: FGMPlatformMapBitmapScaling = .auto
+  ) -> FGMPlatformBitmapAssetMap {
+    return FGMPlatformBitmapAssetMap.make(
+      withAssetName: assetName,
+      bitmapScaling: scaling,
+      imagePixelRatio: ratio,
+      width: width,
+      height: height
+    )
+  }
+
+  private func createImage(side: CGFloat, color: UIColor) -> UIImage {
+    let size = CGSize(width: side, height: side)
+    let format = UIGraphicsImageRendererFormat.default()
+    format.scale = 1.0
+    format.opaque = true
+    return UIGraphicsImageRenderer(size: size, format: format).image { context in
+      color.setFill()
+      context.fill(CGRect(origin: .zero, size: size))
+    }
+  }
+
+  /// The red, green and blue of the first pixel of the image.
+  private func pixel(of image: UIImage) throws -> [UInt8] {
+    var bytes = [UInt8](repeating: 0, count: 4)
+    let context = try #require(
+      CGContext(
+        data: &bytes, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+    context.draw(try #require(image.cgImage), in: CGRect(x: 0, y: 0, width: 1, height: 1))
+    return Array(bytes[0..<3])
+  }
+
   private func createOnePixelImage() -> UIImage {
     let size = CGSize(width: 1, height: 1)
     let format = UIGraphicsImageRendererFormat.default()

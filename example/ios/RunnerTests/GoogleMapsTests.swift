@@ -56,6 +56,19 @@ class StubPluginRegistrar: NSObject, FlutterPluginRegistrar {
   ) {}
 }
 
+/// A map view that records every value its `accessibilityElementsHidden` is set to.
+class AccessibilityRecordingMapView: GMSMapView {
+  var hiddenValues: [Bool] = []
+
+  override var accessibilityElementsHidden: Bool {
+    get { super.accessibilityElementsHidden }
+    set {
+      hiddenValues.append(newValue)
+      super.accessibilityElementsHidden = newValue
+    }
+  }
+}
+
 @MainActor struct GoogleMapsTests {
 
   @Test func plugin() {
@@ -221,6 +234,95 @@ class StubPluginRegistrar: NSObject, FlutterPluginRegistrar {
     #expect(cameraPosition.target.latitude == initialCameraPosition.target.latitude)
     #expect(cameraPosition.target.longitude == initialCameraPosition.target.longitude)
     #expect(Double(cameraPosition.zoom) == Double(initialCameraPosition.zoom))
+  }
+
+  // RedMap fork, FGM_OPT_AX_BATCH.
+
+  private func accessibilityRecordingController() -> (
+    FGMGoogleMapController, AccessibilityRecordingMapView
+  ) {
+    let options = GMSMapViewOptions()
+    options.frame = CGRect(x: 0, y: 0, width: 100, height: 100)
+    options.camera = GMSCameraPosition(latitude: 0, longitude: 0, zoom: 0)
+    let mapView = AccessibilityRecordingMapView(options: options)
+    let controller = FGMGoogleMapController(
+      mapView: mapView,
+      viewIdentifier: 0,
+      creationParameters: emptyCreationParameters(),
+      assetProvider: TestAssetProvider(),
+      binaryMessenger: StubBinaryMessenger()
+    )
+    // The map view hides the elements when it is made and the controller enables them.
+    #expect(mapView.hiddenValues == [true, false])
+    mapView.hiddenValues = []
+    return (controller, mapView)
+  }
+
+  private func marker(_ identifier: String) -> FGMPlatformMarker {
+    return FGMPlatformMarker.make(
+      withAlpha: 1,
+      anchor: FGMPlatformPoint.makeWith(x: 0.5, y: 1),
+      consumeTapEvents: true,
+      draggable: false,
+      flat: false,
+      icon: FGMPlatformBitmap.make(withBitmap: FGMPlatformBitmapDefaultMarker.make(withHue: 0)),
+      infoWindow: FGMPlatformInfoWindow.make(
+        withTitle: nil,
+        snippet: nil,
+        anchor: FGMPlatformPoint.makeWith(x: 0, y: 0)
+      ),
+      position: FGMPlatformLatLng.make(withLatitude: 0, longitude: 0),
+      rotation: 0,
+      visible: true,
+      zIndex: 0,
+      markerId: identifier,
+      clusterManagerId: nil,
+      collisionBehavior: nil
+    )
+  }
+
+  @Test func markerBatchHidesAccessibilityElementsAndPutsThemBack() throws {
+    let (controller, mapView) = accessibilityRecordingController()
+
+    var error: FlutterError? = nil
+    controller.callHandler.updateMarkers(
+      byAdding: [marker("a"), marker("b")], changing: [], removing: [], error: &error)
+
+    #expect(error == nil)
+    #expect(mapView.hiddenValues == [true, false])
+    #expect(!mapView.accessibilityElementsHidden)
+
+    controller.callHandler.updateMarkers(
+      byAdding: [], changing: [marker("a")], removing: ["b"], error: &error)
+
+    #expect(error == nil)
+    #expect(mapView.hiddenValues == [true, false, true, false])
+    #expect(!mapView.accessibilityElementsHidden)
+  }
+
+  @Test func emptyMarkerBatchLeavesAccessibilityElementsAlone() {
+    let (controller, mapView) = accessibilityRecordingController()
+
+    var error: FlutterError? = nil
+    controller.callHandler.updateMarkers(byAdding: [], changing: [], removing: [], error: &error)
+
+    #expect(error == nil)
+    #expect(mapView.hiddenValues.isEmpty)
+    #expect(!mapView.accessibilityElementsHidden)
+  }
+
+  @Test func markerBatchLeavesHiddenAccessibilityElementsHidden() {
+    let (controller, mapView) = accessibilityRecordingController()
+    mapView.accessibilityElementsHidden = true
+    mapView.hiddenValues = []
+
+    var error: FlutterError? = nil
+    controller.callHandler.updateMarkers(
+      byAdding: [marker("a")], changing: [], removing: [], error: &error)
+
+    #expect(error == nil)
+    #expect(mapView.hiddenValues.isEmpty)
+    #expect(mapView.accessibilityElementsHidden)
   }
 
   /// Creates an empty creation parameters object for tests where the values don't matter, just that

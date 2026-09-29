@@ -23,13 +23,26 @@ Do not use the simulator: it does not reproduce the merged raster/platform threa
 `GMSMarker` timings bear no relation to the device. Do not use a debug build: Dart-side overhead
 dominates and the marker batches arrive at a different cadence.
 
+## Switching an optimisation off
+
+Each optimisation of the fork is on by default and is switched off by an environment variable
+of the process, read once: `FGM_OPT_AX_BATCH=0`, `FGM_OPT_ICON_CACHE=0`. With both off the plugin
+does what upstream does. They are set the way `FGM_PERF` is; from the command line
+`xcrun devicectl device process launch --environment-variables '{"FGM_PERF":"1","FGM_OPT_AX_BATCH":"0"}' ...`.
+
 ## Output format
 
 One line per `updateMarkersByAdding:changing:removing:` call, `key=value` pairs separated by
 spaces, fixed key order, all durations in milliseconds:
 
 ```
-[FGMPerf] batch=12 total_ms=812.40 gap_ms=35.10 add=430 change=12 remove=410 markers=1000 pass_add_ms=... pass_change_ms=... pass_remove_ms=... pass_cluster_ms=... icon_default_ms=... icon_default_n=... icon_asset_ms=... icon_asset_n=... icon_bytes_ms=... icon_bytes_n=... icon_other_ms=... icon_other_n=... alloc_ms=... alloc_n=... map_set_ms=... map_set_n=... map_nil_ms=... map_nil_n=... update_rest_ms=... update_rest_n=... cluster_ms=... cluster_n=... unaccounted_ms=...
+[FGMPerf] batch=12 total_ms=812.40 gap_ms=35.10 add=430 change=12 remove=410 markers=1000 pass_add_ms=... pass_change_ms=... pass_remove_ms=... pass_cluster_ms=... icon_default_ms=... icon_default_n=... icon_asset_ms=... icon_asset_n=... icon_bytes_ms=... icon_bytes_n=... icon_other_ms=... icon_other_n=... alloc_ms=... alloc_n=... map_set_ms=... map_set_n=... map_nil_ms=... map_nil_n=... update_rest_ms=... update_rest_n=... cluster_ms=... cluster_n=... unaccounted_ms=... ax_refresh_ms=... ax_refresh_n=...
+```
+
+Before the first batch one line names the switches the process runs with:
+
+```
+[FGMPerf] enabled=1 clock=CACurrentMediaTime units=ms opt_ax_batch=1 opt_icon_cache=1
 ```
 
 | Key | Meaning |
@@ -50,6 +63,7 @@ spaces, fixed key order, all durations in milliseconds:
 | `update_rest_*` | `updateMarker:` wall time minus its icon and map-set phases (anchor, position, zIndex, rotation, info window, opacity). |
 | `cluster_*` | Cluster manager `addItem:` / `removeItem:` per marker plus the final `cluster` call. |
 | `unaccounted_ms` | `total_ms` minus every measured phase: dictionary work, Pigeon accessors, anything not wrapped. |
+| `ax_refresh_*` | The attach and detach of one undrawn marker after the batch, which makes the SDK rebuild its accessibility items once (`FGM_OPT_AX_BATCH`). Zero calls when the switch is off or the batch is empty. |
 
 `*_ms` is the sum over the batch, `*_n` the number of calls. Divide for a per-call average.
 
@@ -146,5 +160,53 @@ are in the RedMap repository under `.AI/perf/`.
 
 ### After optimisation
 
-One column per optimisation, each measured with its `FGM_OPT_*` switch on and off, same protocol.
-Added when the optimisations land.
+Fork commit `f69b725`, measured 2026-09-29 and 2026-09-30 on the device, the country, the cap and
+the network of the baseline, by the same gestures. One build, the switches set per session.
+
+Run B, five big pans per session (ten with both switches on):
+
+| `FGM_OPT_AX_BATCH` | `FGM_OPT_ICON_CACHE` | total_ms median (min to max) | ms per marker operation |
+|---|---|---|---|
+| off | off | 10 837 (10 053 to 11 640) | 6.94 |
+| on (`e4f5ec3`) | off | 2043 (1550 to 2899) | 1.72 |
+| off | on (`f69b725`) | 7790 (6991 to 8139) | 4.95 |
+| on | on | 223 (168 to 268) | 0.145 |
+
+The batches differ in size between sessions, so the cost of one operation is the number to
+compare. The row with both switches off is the baseline measured again.
+
+All runs with both switches on:
+
+| Run | Batches | total_ms median | total_ms max | Baseline median |
+|---|---|---|---|---|
+| A first load, 1000 adds | 5 | 192 | 222 | 5281 |
+| B big pan | 10 | 223 | 268 | 11 215 |
+| C small pan, cap reached in the viewport | 10 | 125 | 160 | 7186 |
+| D big pan, clustering on | 1 | 105 | 105 | 2398 |
+| A first load, cap 5000 | 2 | 877, 974 | | 65 676 (65 853 with both switches off) |
+
+The ten big pans with both switches on, by phase:
+
+| Phase | ms per call | % of the batches |
+|---|---|---|
+| icon_asset | 0.016 | 5.4 % |
+| alloc | 0.055 | 18.6 % |
+| map_set | 0.073 | 25.0 % |
+| map_nil | 0.075 | 25.6 % |
+| update_rest | 0.051 | 17.5 % |
+| ax_refresh | 8.5, once per batch | 3.8 % |
+| unaccounted | | 3.9 % |
+
+Attaching and detaching a marker no longer depend on the number of markers on the map (0.046 to
+0.069 ms per attach with 5000 on it).
+
+The SDK's accessibility items were counted after every batch in a build that logged the count:
+631 to 816 with `FGM_OPT_AX_BATCH` on, 631 to 824 with it off, 1000 markers on the map. Screenshots
+of the RedMap test country with both switches on and with both off are the same pixels.
+
+Not tried, because the target (a big pan under 500 ms) is met without them: pooling of
+`GMSMarker`, the batch inside one `CATransaction`, skipping the icon of a changed marker when it
+is the one the marker has.
+
+Native tests (`example/ios/RunnerTests`, iPhone 16 simulator, iOS 18.3.1): 78 tests in 12 suites
+passed, seven of them new (four of the icon cache, three of the accessibility batch).
