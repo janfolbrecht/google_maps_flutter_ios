@@ -89,21 +89,41 @@
   CFTimeInterval perfUpdateStart = FGMPerfNow();
   CFTimeInterval perfIconSeconds = 0;
   CFTimeInterval perfMapSetSeconds = 0;
-  marker.groundAnchor = FGMGetCGPointForPigeonPoint(platformMarker.anchor);
-  marker.draggable = platformMarker.draggable;
+  // RedMap fork, FGM_OPT_SKIP_UNCHANGED. The SDK logs a usage event in several of these setters
+  // whatever the value, so a property that already holds the value is left alone. The order of
+  // the setters is upstream's.
+  BOOL setsAll = !FGMOptSkipUnchangedEnabled();
+  CGPoint groundAnchor = FGMGetCGPointForPigeonPoint(platformMarker.anchor);
+  if (setsAll || !CGPointEqualToPoint(marker.groundAnchor, groundAnchor)) {
+    marker.groundAnchor = groundAnchor;
+  }
+  if (setsAll || marker.draggable != platformMarker.draggable) {
+    marker.draggable = platformMarker.draggable;
+  }
   CFTimeInterval perfIconStart = FGMPerfNow();
   UIImage *image = FGMIconFromBitmap(platformMarker.icon, assetProvider, screenScale);
-  marker.icon = image;
+  if (setsAll || marker.icon != image) {
+    marker.icon = image;
+  }
   if (FGMPerfEnabled()) {
     perfIconSeconds = FGMPerfNow() - perfIconStart;
     FGMPerfAccumulate(FGMPerfIconPhaseForBitmap(platformMarker.icon), perfIconSeconds);
   }
-  marker.flat = platformMarker.flat;
+  if (setsAll || marker.flat != platformMarker.flat) {
+    marker.flat = platformMarker.flat;
+  }
   marker.position = FGMGetCoordinateForPigeonLatLng(platformMarker.position);
-  marker.rotation = platformMarker.rotation;
-  marker.zIndex = (int)platformMarker.zIndex;
+  if (setsAll || marker.rotation != platformMarker.rotation) {
+    marker.rotation = platformMarker.rotation;
+  }
+  if (setsAll || marker.zIndex != (int)platformMarker.zIndex) {
+    marker.zIndex = (int)platformMarker.zIndex;
+  }
   FGMPlatformInfoWindow *infoWindow = platformMarker.infoWindow;
-  marker.infoWindowAnchor = FGMGetCGPointForPigeonPoint(infoWindow.anchor);
+  CGPoint infoWindowAnchor = FGMGetCGPointForPigeonPoint(infoWindow.anchor);
+  if (setsAll || !CGPointEqualToPoint(marker.infoWindowAnchor, infoWindowAnchor)) {
+    marker.infoWindowAnchor = infoWindowAnchor;
+  }
   if (infoWindow.title) {
     marker.title = infoWindow.title;
     marker.snippet = infoWindow.snippet;
@@ -119,9 +139,17 @@
   if (useOpacityForVisibility) {
     marker.opacity = platformMarker.visible ? platformMarker.alpha : 0.0f;
   } else {
-    marker.opacity = platformMarker.alpha;
+    float opacity = (float)platformMarker.alpha;
+    if (setsAll || marker.opacity != opacity) {
+      marker.opacity = opacity;
+    }
     CFTimeInterval perfMapSetStart = FGMPerfNow();
-    marker.map = platformMarker.visible ? mapView : nil;
+    // A marker that is where it belongs is not attached or detached again: the SDK takes that
+    // for an attach or a detach, with its usage event. A recycled marker depends on this.
+    GMSMapView *map = platformMarker.visible ? mapView : nil;
+    if ((setsAll && !FGMOptRecycleMarkersEnabled()) || marker.map != map) {
+      marker.map = map;
+    }
     if (FGMPerfEnabled()) {
       perfMapSetSeconds = FGMPerfNow() - perfMapSetStart;
       FGMPerfAccumulate(FGMPerfPhaseMapSet, perfMapSetSeconds);
@@ -159,6 +187,7 @@
 @property(assign, nonatomic, readwrite) NSUInteger unsplitOperationLimit;
 @property(copy, nonatomic, readwrite) void (^sliceScheduler)(dispatch_block_t slice);
 @property(assign, nonatomic, readwrite) BOOL ordersNearestFirst;
+@property(assign, nonatomic, readwrite) BOOL recyclesMarkers;
 
 /// Runs the slice that `scheduleSlice` asked for.
 - (void)runScheduledSlice;
@@ -194,6 +223,7 @@ static const NSUInteger kFGMUnsplitOperationLimit = 50;
     _sliceBudget = FGMOptChunkBudget();
     _unsplitOperationLimit = kFGMUnsplitOperationLimit;
     _ordersNearestFirst = FGMOptNearestFirstEnabled();
+    _recyclesMarkers = FGMOptRecycleMarkersEnabled();
     _sliceScheduler = ^(dispatch_block_t slice) {
       dispatch_async(dispatch_get_main_queue(), slice);
     };
@@ -395,8 +425,7 @@ static const NSUInteger kFGMUnsplitOperationLimit = 50;
   NSUInteger done = 0;
   while (self.waitingOperations.count > 0 &&
          (done < minimum || CACurrentMediaTime() - start < self.sliceBudget)) {
-    [self applyNextWaitingOperation];
-    done += 1;
+    done += [self applyNextWaitingOperation];
   }
   if (self.waitingOperations.count > 0) {
     FGMPerfRecordSlice(start, done);
@@ -408,12 +437,70 @@ static const NSUInteger kFGMUnsplitOperationLimit = 50;
   FGMPerfEndBatch(self.markerCount);
 }
 
-- (void)applyNextWaitingOperation {
+/// Carries out the operation whose turn is next. Returns how many operations of the queue that
+/// was: two when a removal and an addition were done as one recycled marker, one otherwise.
+- (NSUInteger)applyNextWaitingOperation {
   FGMPlatformMarker *marker;
   NSString *identifier;
   FGMMarkerOperationKind kind = [self.waitingOperations takeNextOperationWithMarker:&marker
                                                                          identifier:&identifier];
+  if (kind == FGMMarkerOperationKindRemove && self.recyclesMarkers) {
+    FGMMarkerController *leaving = self.markerIdentifierToController[identifier];
+    // Only a marker that is on the map itself can take another one's place, and only for one
+    // that goes on the map itself: a marker of a cluster manager is put on the map and taken
+    // off it by the manager.
+    if (leaving.clusterManagerIdentifier == nil && leaving.marker.map != nil) {
+      FGMPlatformMarker *arriving = [self.waitingOperations
+          takeNextAdditionPassingTest:^BOOL(FGMPlatformMarker *candidate) {
+            return candidate.clusterManagerId == nil && candidate.visible;
+          }];
+      if (arriving != nil) {
+        [self recycleMarkerWithIdentifier:identifier forMarker:arriving];
+        return 2;
+      }
+    }
+  }
   [self applyOperation:kind marker:marker identifier:identifier];
+  return 1;
+}
+
+/// FGM_OPT_RECYCLE_MARKERS. Removes the marker `identifier` and adds `arriving` in one: the
+/// `GMSMarker` stays on the map and becomes the arriving marker. What is on the map afterwards is
+/// what a removal and an addition would have left, without a detach, an allocation and an attach.
+- (void)recycleMarkerWithIdentifier:(NSString *)identifier
+                          forMarker:(FGMPlatformMarker *)arriving {
+  CFTimeInterval perfPassStart = FGMPerfNow();
+  GMSMapView *mapView = self.mapView;
+  GMSMarker *marker = self.markerIdentifierToController[identifier].marker;
+  [self.markerIdentifierToController removeObjectForKey:identifier];
+  // What a removal does to the marker besides taking it off the map, and what a new marker
+  // starts with where updateMarker: leaves a property alone.
+  if (mapView.selectedMarker == marker) {
+    mapView.selectedMarker = nil;
+  }
+  if (marker.title != nil) {
+    marker.title = nil;
+  }
+  if (marker.snippet != nil) {
+    marker.snippet = nil;
+  }
+  if ([marker isKindOfClass:[GMSAdvancedMarker class]]) {
+    ((GMSAdvancedMarker *)marker).collisionBehavior = GMSCollisionBehaviorRequired;
+  }
+  FGMMarkerController *controller =
+      [[FGMMarkerController alloc] initWithMarker:marker
+                                 markerIdentifier:arriving.markerId
+                                          mapView:mapView];
+  // The position of a marker is animatable. The marker is another pin now, not one that moved.
+  [CATransaction begin];
+  [CATransaction setDisableActions:YES];
+  [CATransaction setAnimationDuration:0];
+  [controller updateFromPlatformMarker:arriving
+                         assetProvider:self.assetProvider
+                           screenScale:[self getScreenScale]];
+  [CATransaction commit];
+  self.markerIdentifierToController[arriving.markerId] = controller;
+  FGMPerfRecordPass(FGMPerfPassRecycle, perfPassStart);
 }
 
 - (void)applyOperation:(FGMMarkerOperationKind)kind
@@ -468,7 +555,7 @@ static const NSUInteger kFGMUnsplitOperationLimit = 50;
 }
 
 /// Carries out the waiting addition or change of one marker now, for a call that needs the
-/// marker as the Dart side knows it. Does not end the batch; the next slice does.
+/// marker as the Dart side knows it. Ends the batch if it was the last operation waiting.
 - (void)applyWaitingOperationForIdentifier:(NSString *)identifier {
   FGMPlatformMarker *marker;
   FGMMarkerOperationKind kind = [self.waitingOperations takeOperationForIdentifier:identifier

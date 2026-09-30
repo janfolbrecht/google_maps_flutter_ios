@@ -66,6 +66,12 @@ typedef NS_ENUM(NSUInteger, FGMMarkerOperationKind) {
                                            identifier:(NSString *_Nullable __autoreleasing *_Nonnull)
                                                           identifier;
 
+/// FGM_OPT_RECYCLE_MARKERS. Hands out the addition whose turn is next, and forgets it, if there
+/// is one and `test` accepts it; nil otherwise, and the addition keeps its turn. For the marker
+/// that takes the place of one whose removal was just handed out.
+- (nullable FGMPlatformMarker *)takeNextAdditionPassingTest:
+    (BOOL (NS_NOESCAPE ^)(FGMPlatformMarker *marker))test;
+
 /// Hands out the waiting addition or change of one marker ahead of its turn, for a call that
 /// needs that marker on the map as the Dart side knows it (an info window to show).
 - (FGMMarkerOperationKind)takeOperationForIdentifier:(NSString *)identifier

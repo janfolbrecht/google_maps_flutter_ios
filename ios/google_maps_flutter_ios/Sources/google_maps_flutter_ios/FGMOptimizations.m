@@ -47,6 +47,24 @@ BOOL FGMOptNearestFirstEnabled(void) {
   return enabled;
 }
 
+BOOL FGMOptRecycleMarkersEnabled(void) {
+  static BOOL enabled;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    enabled = FGMOptIsOn(@"FGM_OPT_RECYCLE_MARKERS");
+  });
+  return enabled;
+}
+
+BOOL FGMOptSkipUnchangedEnabled(void) {
+  static BOOL enabled;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    enabled = FGMOptIsOn(@"FGM_OPT_SKIP_UNCHANGED");
+  });
+  return enabled;
+}
+
 CFTimeInterval FGMOptChunkBudget(void) {
   static CFTimeInterval budget;
   static dispatch_once_t onceToken;

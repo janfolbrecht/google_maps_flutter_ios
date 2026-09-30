@@ -206,6 +206,24 @@ static double FGMSquaredDistance(CLLocationCoordinate2D centre, CLLocationCoordi
   return kind;
 }
 
+- (nullable FGMPlatformMarker *)takeNextAdditionPassingTest:
+    (BOOL (NS_NOESCAPE ^)(FGMPlatformMarker *marker))test {
+  if (_additions.count == 0) {
+    return nil;
+  }
+  NSUInteger cursor = _additionCursor;
+  NSString *next = [self nextIdentifierIn:_additionOrder cursor:&cursor waiting:_additions];
+  FGMPlatformMarker *marker = _additions[next];
+  if (!test(marker)) {
+    return nil;
+  }
+  _additionCursor = cursor;
+  [_additions removeObjectForKey:next];
+  _balance += 1;
+  [self resetIfEmpty];
+  return marker;
+}
+
 - (FGMMarkerOperationKind)takeOperationForIdentifier:(NSString *)identifier
                                               marker:(FGMPlatformMarker *_Nullable __autoreleasing
                                                           *_Nonnull)marker {

@@ -72,6 +72,9 @@ typedef NS_ENUM(NSUInteger, FGMPerfPass) {
   FGMPerfPassChange,
   FGMPerfPassRemove,
   FGMPerfPassClusterInvoke,
+  /// A marker that goes and a marker that comes done as one (`FGM_OPT_RECYCLE_MARKERS`). The
+  /// icon and update_rest phases of such a pair are counted as for any marker.
+  FGMPerfPassRecycle,
   FGMPerfPassCount
 };
 void FGMPerfRecordPass(FGMPerfPass pass, CFTimeInterval startedAt);

@@ -30,6 +30,18 @@ BOOL FGMOptChunkedBatchEnabled(void);
 /// looks at is finished first. Off, they keep the order the Dart side sent them in.
 BOOL FGMOptNearestFirstEnabled(void);
 
+/// `FGM_OPT_RECYCLE_MARKERS`: within a chunked batch, a marker that goes and a marker that comes
+/// are one operation: the `GMSMarker` of the first stays on the map and takes the identifier and
+/// the properties of the second. Detaching a marker, making one and attaching it cost several
+/// times what moving one costs, most of it in the SDK's own usage log, which writes to the user
+/// defaults on every attach and detach.
+BOOL FGMOptRecycleMarkersEnabled(void);
+
+/// `FGM_OPT_SKIP_UNCHANGED`: when a marker is updated, a property that already holds the value
+/// is not set again, and a marker that is on the map is not attached to it again. The SDK logs a
+/// usage event for several of the setters whatever the value.
+BOOL FGMOptSkipUnchangedEnabled(void);
+
 /// `FGM_OPT_CHUNK_BUDGET_MS`: the time one slice of a chunked batch may take, in seconds. 8 ms
 /// unless the variable holds another positive number of milliseconds. A knob for measuring.
 CFTimeInterval FGMOptChunkBudget(void);

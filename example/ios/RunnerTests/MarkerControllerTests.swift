@@ -315,7 +315,8 @@ import Testing
   // RedMap fork, FGM_OPT_CHUNKED_BATCH: the queue of waiting operations.
 
   func platformMarker(
-    _ identifier: String, alpha: Double = 1, latitude: Double = 0, longitude: Double = 0
+    _ identifier: String, alpha: Double = 1, latitude: Double = 0, longitude: Double = 0,
+    title: String? = "title", visible: Bool = true, clusterManagerId: String? = nil
   ) -> FGMPlatformMarker {
     return FGMPlatformMarker.make(
       withAlpha: alpha,
@@ -325,16 +326,16 @@ import Testing
       flat: false,
       icon: placeholderBitmap(),
       infoWindow: FGMPlatformInfoWindow.make(
-        withTitle: "title",
+        withTitle: title,
         snippet: nil,
         anchor: FGMPlatformPoint.makeWith(x: 0, y: 0)
       ),
       position: FGMPlatformLatLng.make(withLatitude: latitude, longitude: longitude),
       rotation: 0,
-      visible: true,
+      visible: visible,
       zIndex: 0,
       markerId: identifier,
-      clusterManagerId: nil,
+      clusterManagerId: clusterManagerId,
       collisionBehavior: nil
     )
   }
@@ -616,6 +617,8 @@ import Testing
     let controller = markersController(withMapView: mapView, eventDelegate: TestMapEventHandler())
     let recorder = SliceRecorder()
     recorder.attach(to: controller)
+    // A removal and an addition, each by itself; the two as one have their own tests.
+    controller.recyclesMarkers = false
 
     controller.updateMarkersInSlices(
       byAdding: ["a", "b", "c", "d"].map { platformMarker($0) }, changing: [], removing: [])
@@ -707,6 +710,192 @@ import Testing
     recorder.runAll()
     #expect(identifiers(of: controller) == ["a", "b", "c"])
     #expect(controller.waitingOperationCount() == 0)
+  }
+
+  // RedMap fork, FGM_OPT_RECYCLE_MARKERS.
+
+  @Test func markerThatGoesIsRecycledForTheMarkerThatComes() {
+    let mapView = MarkerControllerTests.realMapView()
+    let eventHandler = TapCountingEventHandler()
+    let controller = markersController(withMapView: mapView, eventDelegate: eventHandler)
+    controller.updateMarkersInSlices(
+      byAdding: [platformMarker("a", latitude: 1), platformMarker("b", latitude: 2)],
+      changing: [], removing: [])
+    let markerA = gmsMarker("a", of: controller)
+    #expect(markerA?.title == "title")
+    mapView.selectedMarker = markerA
+    var scheduled = 0
+    controller.sliceScheduler = { _ in scheduled += 1 }
+
+    #expect(controller.recyclesMarkers)
+    controller.updateMarkersInSlices(
+      byAdding: [platformMarker("x", alpha: 0.5, latitude: 5, longitude: 6, title: nil)],
+      changing: [], removing: ["a"])
+
+    // One marker went and one came, and it is the same GMSMarker, still on the map.
+    #expect(identifiers(of: controller) == ["b", "x"])
+    #expect(controller.waitingOperationCount() == 0)
+    #expect(scheduled == 0)
+    #expect(gmsMarker("x", of: controller) === markerA)
+    #expect(markerA?.map === mapView)
+    #expect(markerA?.position.latitude == 5)
+    #expect(markerA?.position.longitude == 6)
+    #expect(markerA?.opacity == 0.5)
+    // Nothing of the marker that went is left on it.
+    #expect(markerA?.title == nil)
+    #expect(mapView.selectedMarker == nil)
+
+    // A tap on the GMSMarker is a tap on the marker it is now.
+    let userData = markerA?.userData as? FGMMarkerUserData
+    #expect(userData?.markerIdentifier == "x")
+    #expect(controller.didTapMarker(withIdentifier: "x"))
+    #expect(!controller.didTapMarker(withIdentifier: "a"))
+    #expect(eventHandler.tapped == ["x"])
+  }
+
+  @Test func recycledMarkersEndAsTheMarkersOfTheBatch() {
+    let mapView = MarkerControllerTests.realMapView()
+    let controller = markersController(withMapView: mapView, eventDelegate: TestMapEventHandler())
+    controller.updateMarkersInSlices(
+      byAdding: (0..<5).map { platformMarker("old\($0)", latitude: Double($0)) },
+      changing: [], removing: [])
+    let recorder = SliceRecorder()
+    recorder.attach(to: controller)
+
+    // Three go and four come: three are recycled, the fourth is a new marker.
+    let arriving = (0..<4).map { platformMarker("new\($0)", latitude: 10 + Double($0)) }
+    controller.updateMarkersInSlices(
+      byAdding: arriving, changing: [], removing: ["old0", "old1", "old2"])
+    recorder.runAll()
+
+    #expect(identifiers(of: controller) == ["old3", "old4", "new0", "new1", "new2", "new3"])
+    for marker in arriving {
+      let onMap = gmsMarker(marker.markerId, of: controller)
+      #expect(onMap?.map === mapView)
+      #expect(onMap?.position.latitude == marker.position.latitude)
+    }
+    #expect(gmsMarker("old3", of: controller)?.position.latitude == 3)
+  }
+
+  @Test func markerIsNotRecycledWhenSwitchedOff() {
+    let mapView = MarkerControllerTests.realMapView()
+    let controller = markersController(withMapView: mapView, eventDelegate: TestMapEventHandler())
+    controller.updateMarkersInSlices(byAdding: [platformMarker("a")], changing: [], removing: [])
+    let markerA = gmsMarker("a", of: controller)
+    controller.recyclesMarkers = false
+
+    controller.updateMarkersInSlices(byAdding: [platformMarker("x")], changing: [], removing: ["a"])
+
+    #expect(identifiers(of: controller) == ["x"])
+    #expect(gmsMarker("x", of: controller) !== markerA)
+    #expect(markerA?.map == nil)
+  }
+
+  @Test func markerIsNotRecycledForOneThatIsNotPutOnTheMapItself() {
+    let mapView = MarkerControllerTests.realMapView()
+    let controller = markersController(withMapView: mapView, eventDelegate: TestMapEventHandler())
+    controller.updateMarkersInSlices(
+      byAdding: [platformMarker("a"), platformMarker("b")], changing: [], removing: [])
+    let markerA = gmsMarker("a", of: controller)
+    let markerB = gmsMarker("b", of: controller)
+
+    // One that is not visible, and one that belongs to a cluster manager.
+    controller.updateMarkersInSlices(
+      byAdding: [platformMarker("hidden", visible: false)], changing: [], removing: ["a"])
+    controller.updateMarkersInSlices(
+      byAdding: [platformMarker("clustered", clusterManagerId: "manager")],
+      changing: [], removing: ["b"])
+
+    #expect(identifiers(of: controller) == ["hidden", "clustered"])
+    #expect(markerA?.map == nil)
+    #expect(markerB?.map == nil)
+    #expect(gmsMarker("hidden", of: controller) !== markerA)
+    #expect(gmsMarker("hidden", of: controller)?.map == nil)
+    #expect(gmsMarker("clustered", of: controller) !== markerB)
+  }
+
+  // RedMap fork, FGM_OPT_SKIP_UNCHANGED.
+
+  /// Counts how often the properties the SDK logs a usage event for are set.
+  class SetterCountingMarker: GMSMarker {
+    var sets: [String: Int] = [:]
+
+    override var isDraggable: Bool {
+      get { super.isDraggable }
+      set {
+        sets["draggable", default: 0] += 1
+        super.isDraggable = newValue
+      }
+    }
+
+    override var rotation: CLLocationDegrees {
+      get { super.rotation }
+      set {
+        sets["rotation", default: 0] += 1
+        super.rotation = newValue
+      }
+    }
+
+    override var opacity: Float {
+      get { super.opacity }
+      set {
+        sets["opacity", default: 0] += 1
+        super.opacity = newValue
+      }
+    }
+
+    override var map: GMSMapView? {
+      get { super.map }
+      set {
+        sets["map", default: 0] += 1
+        super.map = newValue
+      }
+    }
+
+    override var position: CLLocationCoordinate2D {
+      get { super.position }
+      set {
+        sets["position", default: 0] += 1
+        super.position = newValue
+      }
+    }
+  }
+
+  @Test func updateDoesNotSetAPropertyThatAlreadyHoldsTheValue() {
+    let mapView = MarkerControllerTests.realMapView()
+    let marker = SetterCountingMarker()
+    // The SDK sets the opacity and the position of a marker it makes through these setters.
+    marker.sets = [:]
+    func update(_ platformMarker: FGMPlatformMarker) {
+      FGMMarkerController.update(
+        marker,
+        from: platformMarker,
+        with: mapView,
+        assetProvider: TestAssetProvider(),
+        screenScale: 1,
+        usingOpacityForVisibility: false
+      )
+    }
+
+    // A new marker holds upstream's defaults already; only the map is new to it.
+    update(platformMarker("a", latitude: 1))
+    #expect(marker.sets["draggable"] == nil)
+    #expect(marker.sets["rotation"] == nil)
+    #expect(marker.sets["opacity"] == nil)
+    #expect(marker.sets["map"] == 1)
+    #expect(marker.map === mapView)
+
+    // The same marker again, moved and dimmed: what changed is set, the map is not.
+    update(platformMarker("a", alpha: 0.5, latitude: 2))
+    #expect(marker.sets["opacity"] == 1)
+    #expect(marker.opacity == 0.5)
+    #expect(marker.sets["position"] == 2)
+    #expect(marker.sets["map"] == 1)
+
+    // A marker that is no longer visible leaves the map.
+    update(platformMarker("a", alpha: 0.5, latitude: 2, visible: false))
+    #expect(marker.sets["map"] == 2)
+    #expect(marker.map == nil)
   }
 
   /// Counts how often clustering is invoked.

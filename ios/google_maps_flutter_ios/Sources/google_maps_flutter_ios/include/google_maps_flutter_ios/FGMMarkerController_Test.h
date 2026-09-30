@@ -40,6 +40,10 @@
 /// the centre of the map first (FGM_OPT_NEAREST_FIRST, which this starts from).
 @property(assign, nonatomic) BOOL ordersNearestFirst;
 
+/// Whether a marker that goes and a marker that comes in a batch are done as one, the
+/// `GMSMarker` staying on the map (FGM_OPT_RECYCLE_MARKERS, which this starts from).
+@property(assign, nonatomic) BOOL recyclesMarkers;
+
 /// Gets the block that runs the next slice and has to run it later. The main queue by default;
 /// a test keeps the block and runs it when it wants the next slice.
 @property(copy, nonatomic) void (^sliceScheduler)(dispatch_block_t slice);

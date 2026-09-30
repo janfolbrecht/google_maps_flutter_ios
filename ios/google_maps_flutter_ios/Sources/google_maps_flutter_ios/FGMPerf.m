@@ -14,6 +14,7 @@
 static CFTimeInterval gPhaseSeconds[FGMPerfPhaseCount];
 static NSUInteger gPhaseCalls[FGMPerfPhaseCount];
 static CFTimeInterval gPassSeconds[FGMPerfPassCount];
+static NSUInteger gPassCalls[FGMPerfPassCount];
 static CFTimeInterval gBatchStart;
 static CFTimeInterval gPreviousBatchEnd;
 static NSUInteger gBatchSequence;
@@ -79,10 +80,12 @@ BOOL FGMPerfEnabled(void) {
     enabled = [value isEqualToString:@"1"];
     if (enabled) {
       NSLog(@"[FGMPerf] enabled=1 clock=CACurrentMediaTime units=ms opt_ax_batch=%d "
-            @"opt_icon_cache=%d opt_chunked_batch=%d opt_nearest_first=%d chunk_budget_ms=%.1f "
-            @"chunk_pacing=%@",
+            @"opt_icon_cache=%d opt_chunked_batch=%d opt_nearest_first=%d opt_recycle_markers=%d "
+            @"opt_skip_unchanged=%d chunk_budget_ms=%.1f chunk_pacing=%@",
             FGMOptAccessibilityBatchEnabled(), FGMOptIconCacheEnabled(),
-            FGMOptChunkedBatchEnabled(), FGMOptNearestFirstEnabled(), FGMOptChunkBudget() * 1000.0,
+            FGMOptChunkedBatchEnabled(), FGMOptNearestFirstEnabled(),
+            FGMOptRecycleMarkersEnabled(), FGMOptSkipUnchangedEnabled(),
+            FGMOptChunkBudget() * 1000.0,
             FGMOptChunkPacingIsFrame() ? @"frame" : @"queue");
       [FGMPerfFrameMonitor start];
     }
@@ -101,6 +104,7 @@ void FGMPerfBeginBatch(NSUInteger toAdd, NSUInteger toChange, NSUInteger toRemov
   memset(gPhaseSeconds, 0, sizeof(gPhaseSeconds));
   memset(gPhaseCalls, 0, sizeof(gPhaseCalls));
   memset(gPassSeconds, 0, sizeof(gPassSeconds));
+  memset(gPassCalls, 0, sizeof(gPassCalls));
   gToAdd = toAdd;
   gToChange = toChange;
   gToRemove = toRemove;
@@ -144,6 +148,7 @@ void FGMPerfRecordPass(FGMPerfPass pass, CFTimeInterval startedAt) {
     return;
   }
   gPassSeconds[pass] += CACurrentMediaTime() - startedAt;
+  gPassCalls[pass] += 1;
 }
 
 void FGMPerfAccumulateSince(FGMPerfPhase phase, CFTimeInterval startedAt) {
@@ -218,7 +223,8 @@ void FGMPerfEndBatch(NSUInteger totalMarkers) {
         @"unaccounted_ms=%.2f "
         @"ax_refresh_ms=%.2f ax_refresh_n=%lu "
         @"slices=%lu slice_ops=%lu work_ms=%.2f max_slice_ms=%.2f merged=%lu "
-        @"frames=%lu max_frame_gap_ms=%.2f t_begin=%.4f t_end=%.4f",
+        @"frames=%lu max_frame_gap_ms=%.2f t_begin=%.4f t_end=%.4f "
+        @"recycled=%lu pass_recycle_ms=%.2f",
         (unsigned long)gBatchSequence, FGMPerfMilliseconds(total), gapMs, (unsigned long)gToAdd,
         (unsigned long)gToChange, (unsigned long)gToRemove, (unsigned long)totalMarkers,
         FGMPerfMilliseconds(gPassSeconds[FGMPerfPassAdd]),
@@ -249,5 +255,6 @@ void FGMPerfEndBatch(NSUInteger totalMarkers) {
         (unsigned long)gSliceOperations, FGMPerfMilliseconds(gSliceSeconds),
         FGMPerfMilliseconds(gLongestSlice), (unsigned long)gMergedBatches,
         (unsigned long)gFramesInBatch, FGMPerfMilliseconds(gLongestFrameGapInBatch), gBatchStart,
-        end);
+        end, (unsigned long)gPassCalls[FGMPerfPassRecycle],
+        FGMPerfMilliseconds(gPassSeconds[FGMPerfPassRecycle]));
 }
