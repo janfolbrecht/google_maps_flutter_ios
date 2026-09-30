@@ -89,8 +89,8 @@ BOOL FGMOptChunkPacingIsFrame(void) {
   static BOOL frame;
   static dispatch_once_t onceToken;
   dispatch_once(&onceToken, ^{
-    frame = [NSProcessInfo.processInfo.environment[@"FGM_OPT_CHUNK_PACING"]
-        isEqualToString:@"frame"];
+    frame = ![NSProcessInfo.processInfo.environment[@"FGM_OPT_CHUNK_PACING"]
+        isEqualToString:@"queue"];
   });
   return frame;
 }

@@ -38,8 +38,8 @@ NS_ASSUME_NONNULL_BEGIN
 /// Number of markers currently held by the controller. RedMap fork addition, used by FGMPerf.
 - (NSUInteger)markerCount;
 /// RedMap fork, FGM_OPT_CHUNKED_BATCH. Applies a batch in slices of a few milliseconds: the first
-/// slice within the call, the following ones on later turns of the main run loop, so that the
-/// map answers touches and draws in between. A batch that comes while an earlier one is still
+/// slice within the call, the following ones one per frame of the display, so that the map
+/// answers touches and draws in between. A batch that comes while an earlier one is still
 /// being applied is merged with what is left of it. Clustering is invoked, and the accessibility
 /// items are brought up to date (FGM_OPT_AX_BATCH), once, after the last slice. The markers on
 /// the map after the last slice are those upstream's three passes would have left.

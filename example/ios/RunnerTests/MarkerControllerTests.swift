@@ -612,6 +612,26 @@ import Testing
     }
   }
 
+  @Test func slicesRunOnePerFrameOfTheDisplayByDefault() async throws {
+    let mapView = MarkerControllerTests.realMapView()
+    let controller = markersController(withMapView: mapView, eventDelegate: TestMapEventHandler())
+    // No scheduler of the test's: the controller's own display link runs the slices.
+    #expect(controller.sliceScheduler == nil)
+    controller.sliceBudget = 0
+    controller.unsplitOperationLimit = 0
+
+    controller.updateMarkersInSlices(
+      byAdding: ["a", "b", "c", "d", "e"].map { platformMarker($0) }, changing: [], removing: [])
+    #expect(identifiers(of: controller) == ["a"])
+
+    // One marker per frame: four frames to go. Ten seconds is for a simulator on a busy machine.
+    for _ in 0..<500 where controller.waitingOperationCount() > 0 {
+      try await Task.sleep(nanoseconds: 20_000_000)
+    }
+    #expect(controller.waitingOperationCount() == 0)
+    #expect(identifiers(of: controller) == ["a", "b", "c", "d", "e"])
+  }
+
   @Test func batchThatComesBetweenSlicesIsMergedWithTheRest() {
     let mapView = MarkerControllerTests.realMapView()
     let controller = markersController(withMapView: mapView, eventDelegate: TestMapEventHandler())

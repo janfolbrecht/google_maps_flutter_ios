@@ -26,9 +26,9 @@ BOOL FGMOptIconCacheEnabled(void);
 /// changed in a pan that was a third of the SDK's drawing. Needs `FGM_OPT_ICON_CACHE`.
 BOOL FGMOptIconDescriptionEnabled(void);
 
-/// `FGM_OPT_CHUNKED_BATCH`: apply a marker batch in slices of a few milliseconds with the run loop
-/// turning between them, so that the map answers touches and draws while the markers arrive,
-/// instead of in one piece on the main thread.
+/// `FGM_OPT_CHUNKED_BATCH`: apply a marker batch in slices of a few milliseconds, one per frame of
+/// the display, so that the map answers touches and draws while the markers arrive, instead of
+/// in one piece on the main thread.
 BOOL FGMOptChunkedBatchEnabled(void);
 
 /// `FGM_OPT_NEAREST_FIRST`: within a chunked batch, carry out the removals and the additions in
@@ -52,8 +52,10 @@ BOOL FGMOptSkipUnchangedEnabled(void);
 /// unless the variable holds another positive number of milliseconds. A knob for measuring.
 CFTimeInterval FGMOptChunkBudget(void);
 
-/// `FGM_OPT_CHUNK_PACING=frame`: run one slice per frame of the display instead of one per turn
-/// of the main queue. A knob for measuring; the default is the main queue.
+/// `FGM_OPT_CHUNK_PACING`: when the slices of a chunked batch run. `frame`, the default: one slice
+/// per frame of the display, so that the SDK never has more than one slice of changed markers to
+/// draw in a frame. `queue`: one slice per turn of the main queue, which puts two or three slices
+/// between two frames and makes those frames long. A knob for measuring.
 BOOL FGMOptChunkPacingIsFrame(void);
 
 NS_ASSUME_NONNULL_END

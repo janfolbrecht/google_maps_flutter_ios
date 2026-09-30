@@ -44,8 +44,9 @@
 /// `GMSMarker` staying on the map (FGM_OPT_RECYCLE_MARKERS, which this starts from).
 @property(assign, nonatomic) BOOL recyclesMarkers;
 
-/// Gets the block that runs the next slice and has to run it later. The main queue by default;
-/// a test keeps the block and runs it when it wants the next slice.
+/// Gets the block that runs the next slice and has to run it later. Nil by default: the slices
+/// then run one per frame of the display. A test keeps the block and runs it when it wants the
+/// next slice.
 @property(copy, nonatomic) void (^sliceScheduler)(dispatch_block_t slice);
 
 @end

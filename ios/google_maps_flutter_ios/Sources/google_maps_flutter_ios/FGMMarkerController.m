@@ -181,11 +181,12 @@
 @property(assign, nonatomic) BOOL sliceScheduled;
 /// Whether the batch in progress hid the map's accessibility elements (FGM_OPT_AX_BATCH).
 @property(assign, nonatomic) BOOL batchHidAccessibilityElements;
-/// Runs one slice per frame when the pacing is `frame`; nil between batches.
+/// Runs one slice per frame of the display while a batch is in progress and there is no
+/// `sliceScheduler`; nil between batches.
 @property(strong, nonatomic, nullable) CADisplayLink *sliceDisplayLink;
 @property(assign, nonatomic, readwrite) CFTimeInterval sliceBudget;
 @property(assign, nonatomic, readwrite) NSUInteger unsplitOperationLimit;
-@property(copy, nonatomic, readwrite) void (^sliceScheduler)(dispatch_block_t slice);
+@property(copy, nonatomic, readwrite, nullable) void (^sliceScheduler)(dispatch_block_t slice);
 @property(assign, nonatomic, readwrite) BOOL ordersNearestFirst;
 @property(assign, nonatomic, readwrite) BOOL recyclesMarkers;
 
@@ -224,9 +225,11 @@ static const NSUInteger kFGMUnsplitOperationLimit = 50;
     _unsplitOperationLimit = kFGMUnsplitOperationLimit;
     _ordersNearestFirst = FGMOptNearestFirstEnabled();
     _recyclesMarkers = FGMOptRecycleMarkersEnabled();
-    _sliceScheduler = ^(dispatch_block_t slice) {
-      dispatch_async(dispatch_get_main_queue(), slice);
-    };
+    if (!FGMOptChunkPacingIsFrame()) {
+      _sliceScheduler = ^(dispatch_block_t slice) {
+        dispatch_async(dispatch_get_main_queue(), slice);
+      };
+    }
   }
   return self;
 }
@@ -526,7 +529,10 @@ static const NSUInteger kFGMUnsplitOperationLimit = 50;
 }
 
 - (void)scheduleSlice {
-  if (FGMOptChunkPacingIsFrame()) {
+  if (self.sliceScheduler == nil) {
+    // One slice per frame. The SDK draws the markers that changed since its last frame on the
+    // main thread, and that costs more than changing them did; a slice per turn of the main
+    // queue puts two or three slices into one frame and makes that frame long.
     if (self.sliceDisplayLink == nil) {
       FGMMarkerSliceTicker *ticker = [[FGMMarkerSliceTicker alloc] init];
       ticker.controller = self;
