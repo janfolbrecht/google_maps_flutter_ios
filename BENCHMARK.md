@@ -30,6 +30,13 @@ of the process, read once: `FGM_OPT_AX_BATCH=0`, `FGM_OPT_ICON_CACHE=0`. With bo
 does what upstream does. They are set the way `FGM_PERF` is; from the command line
 `xcrun devicectl device process launch --environment-variables '{"FGM_PERF":"1","FGM_OPT_AX_BATCH":"0"}' ...`.
 
+The later optimisations have their switches too: `FGM_OPT_CHUNKED_BATCH`, `FGM_OPT_NEAREST_FIRST`,
+`FGM_OPT_RECYCLE_MARKERS`, `FGM_OPT_SKIP_UNCHANGED`, `FGM_OPT_ICON_DESCRIPTION` (each off with
+`0`), and two knobs of the slices: `FGM_OPT_CHUNK_BUDGET_MS=<milliseconds per slice>` (8) and
+`FGM_OPT_CHUNK_PACING=queue` (a slice per turn of the main queue instead of one per frame).
+Recycling happens only inside a batch applied in slices; to see it without slices give the
+slices a budget no batch reaches (`FGM_OPT_CHUNK_BUDGET_MS=100000`).
+
 ## Output format
 
 One line per `updateMarkersByAdding:changing:removing:` call, `key=value` pairs separated by
@@ -65,7 +72,29 @@ Before the first batch one line names the switches the process runs with:
 | `unaccounted_ms` | `total_ms` minus every measured phase: dictionary work, Pigeon accessors, anything not wrapped. |
 | `ax_refresh_*` | The attach and detach of one undrawn marker after the batch, which makes the SDK rebuild its accessibility items once (`FGM_OPT_AX_BATCH`). Zero calls when the switch is off or the batch is empty. |
 
+| `slices`, `slice_ops` | Slices the batch was applied in (1 for a batch in one piece) and the marker operations they carried out; a recycled marker is two. |
+| `work_ms`, `max_slice_ms` | Time the plugin held the main thread, all slices together, and the longest slice. `unaccounted_ms` is `work_ms` minus the phases. |
+| `merged` | Batches that arrived while this one was being applied and were merged into it. Their sizes are added to `add` / `change` / `remove`. |
+| `frames`, `max_frame_gap_ms` | Callbacks of FGMPerf's display link between the begin and the end of the batch, and the longest time between two of them. |
+| `t_begin`, `t_end` | Begin and end of the batch on the clock of the `hitch` lines (`CACurrentMediaTime`, seconds). |
+| `recycled`, `pass_recycle_ms` | Markers that went and came as one (`FGM_OPT_RECYCLE_MARKERS`) and the time that took. Their icon and update_rest phases are counted as for any marker. |
+
 `*_ms` is the sum over the batch, `*_n` the number of calls. Divide for a per-call average.
+
+**`total_ms` of a batch applied in slices is the time to its last marker**, with the run loop
+turning in between, not the time the main thread was held. That is what the second kind of line
+is for:
+
+```
+[FGMPerf] hitch gap_ms=61.7 t_end=76456.5887
+```
+
+With `FGM_PERF=1` a display link runs on the main run loop and logs every gap of 34 ms (two
+frames at 60 Hz) or more between two of its callbacks. A gap is a stretch in which the main
+thread answered nothing, whoever held it: the Dart side building the markers, the batch or a
+slice of it, the SDK drawing what changed. Lay the gaps over the batches by `t_begin` and `t_end`;
+the longest gap from a quarter of a second before a batch to a quarter of a second after it is
+the number to compare (`hitch` below).
 
 Not covered by the probes: Pigeon decoding of the message (happens before the handler is called)
 and the Dart side of the update. Those are measured, if needed, from Dart.
@@ -210,3 +239,56 @@ is the one the marker has.
 
 Native tests (`example/ios/RunnerTests`, iPhone 16 simulator, iOS 18.3.1): 78 tests in 12 suites
 passed, seven of them new (four of the icon cache, three of the accessibility batch).
+
+### Slices, recycled markers (2026-09-30)
+
+Same device, country, cap and gestures. What is measured is no longer only the batch: a display
+link logs how long the main thread goes without a frame (`hitch`, see "Output format"), and
+that number was taken for the batch in one piece as well. Run B, five big pans per session,
+median (minimum to maximum). "One piece" is `FGM_OPT_CHUNKED_BATCH=0`.
+
+| Fork commit, switches | Plugin work, ms | Time to the last marker, ms | Longest gap between frames, ms | ms per marker operation |
+|---|---|---|---|---|
+| `d8d9dfc`, one piece (what `3708123` did) | 208 (182–235) | 208 | 386 (261–477) | 0.132 |
+| `d8d9dfc`, slices per turn of the main queue | 313 (297–325) | 668 (622–674) | 60 (46–62) | 0.203 |
+| `d66deee`, recycling, in one slice | 46 (39–56) | 46 | 259 (169–289) | 0.031 |
+| `d66deee`, recycling, slices per queue turn | 57 (48–68) | 222 (186–260) | 77 (72–102) | 0.037 |
+| `d66deee`, recycling, slices per frame | 59 (53–63) | 284 (247–311) | 54 (51–73) | 0.037 |
+| `ce23959`, all on (per frame, 8 ms, icon description) | 59 (49–69) | 225 (160–246) | 49 (43–63) | 0.039 |
+| `ce23959`, all on, second session | 64 (41–86) | 212 (156–258) | 55 (42–68) | 0.041 |
+| `ce23959`, `FGM_OPT_ICON_DESCRIPTION=0` | 60 (52–65) | 267 (225–303) | 53 (46–64) | 0.037 |
+| `ce23959`, `FGM_OPT_RECYCLE_MARKERS=0` | 318 (252–375) | 727 (602–880) | 47 (34–63) | 0.208 |
+| `ce23959`, `FGM_OPT_SKIP_UNCHANGED=0`, recycling on | 284 (276–316) | 843 (831–911) | 56 (43–73) | 0.186 |
+| `ce23959`, `FGM_OPT_NEAREST_FIRST=0` | 47 (40–66) | 162 (154–264) | 50 (38–61) | 0.035 |
+| `ce23959`, one piece | 179 (136–204) | 179 | 239 (222–334) | 0.117 |
+
+- The batch in one piece held the main thread for 0.39 s, not for the 0.21 s of `total_ms`: the
+  SDK draws every marker that changed in the frame after the batch, and its usage log flushes
+  on the main queue.
+- Slices without recycling make the gap short and the pan three times as long. Recycling
+  without slices makes the plugin fast and leaves a gap of 0.26 s, the SDK drawing 700 markers
+  in one frame. It takes both.
+- A slice per frame beats a slice per turn of the main queue once markers are recycled: the
+  queue puts two or three slices between two frames and the frame that draws them is long.
+- With `FGM_OPT_SKIP_UNCHANGED` off a recycled marker has every property set again while on the
+  map, and a pan takes 843 ms; from `64264ba` on recycling is off when that switch is off.
+- Ordering cost the first slice its whole budget (10 ms for 1400 operations), which is the
+  frame by which `FGM_OPT_NEAREST_FIRST=0` is faster; `64264ba` orders a fresh batch without a
+  lookup per marker.
+
+Other runs on `ce23959`, all on: first load of 1000 markers 583 and 550 ms to the last marker
+with a longest gap of 53 and 48 ms (one piece: 150 to 218 ms and a gap of 278 to 456 ms); run C
+159 ms (111 to 202) with a gap of 43 ms (35 to 54). A first load has nothing to recycle and is
+applied at about 31 markers per frame.
+
+Time Profiler, one big pan, `ce23959`, all on: no main-thread hang in the trace. Of 210 ms of
+main-thread samples between the batch arriving and its last marker, 102 are the SDK drawing
+(`GMSEntityRendererView draw`, seven frames), 42 the slices, 23 Flutter, 17 layer commits, 16
+the Pigeon handler (decoding, merging, ordering, first slice) and 4 the SDK's usage log. The same
+pan on `3708123`: one hang of 325 ms, the usage log 249 ms (173 inside the batch, in
+`-[GMSMapsSDKLogger addEvent:]` under every attach and detach, 76 on the main queue after it).
+
+Native tests (`example/ios/RunnerTests`, iPhone 16 simulator, iOS 18.3.1) on `64264ba`: 109
+tests in 12 suites passed; 27 are new with this work (the queue, the slices, recycling, skip
+unchanged, the icon description). Running them needs `pod install` in `example/ios` first,
+because the fork added source files; that rewrites `Runner.xcodeproj`, which is not committed.

@@ -55,9 +55,9 @@ The fork proceeds in the order: **measure first, then optimise only what the num
 4. **`FGM_OPT_ICON_CACHE`** (`FGMImageUtils.m`). `FGMIconFromBitmap` keeps the image it made and
    gives the same `UIImage` to every marker with an equal bitmap descriptor. The upstream
    function is unchanged under the name `FGMUncachedIconFromBitmap`.
-5. `FGMOptimizations.h/.m`: the two switches. Each optimisation is on by default; the environment
-   variable of its name set to `0` switches it off, and with both off the plugin does what
-   upstream does. `BENCHMARK.md` has the numbers of every combination.
+5. `FGMOptimizations.h/.m`: the switches. Each optimisation is on by default; the environment
+   variable of its name set to `0` switches it off, and with all of them off the plugin does what
+   upstream does. `BENCHMARK.md` has the numbers.
 6. Native tests of both in `example/ios/RunnerTests` (`GoogleMapsTests.swift`,
    `ExtractIconFromDataTests.swift`), added to the upstream files so that the Xcode project is
    untouched.
@@ -71,15 +71,69 @@ The fork proceeds in the order: **measure first, then optimise only what the num
    `FGM_OPT_AX_BATCH` stands aside. The price is that VoiceOver does not see the map or its
    markers. RedMap sets it to `true` in `main.dart`.
 
+8. **`FGM_OPT_CHUNKED_BATCH`** (`FGMMarkerController.m`, `updateMarkersInSlicesByAdding:`;
+   `FGMMarkerBatchQueue`). A batch of more than 50 marker operations is applied in slices: the
+   first within the Pigeon call, the following ones one per frame of the display
+   (`CADisplayLink`), each for `FGM_OPT_CHUNK_BUDGET_MS` (8 ms), so the map answers touches and
+   draws while the markers arrive. One slice per frame, not per turn of the main queue, because
+   the SDK draws on the main thread whatever changed since its last frame, and that costs more
+   than changing it did (`FGM_OPT_CHUNK_PACING=queue` is the other pacing, kept for measuring).
+   The queue hands out changes first, then removals and additions in turns, so the number of
+   markers on the map never rises above the larger of before and after. A batch that comes
+   while an earlier one is still being applied is merged with what is left: an operation a later
+   batch undoes is dropped, a marker that goes and comes back stays and is changed. Clustering is
+   invoked, and `FGM_OPT_AX_BATCH` brings the accessibility items up to date, once, after the last
+   slice. Upstream's three passes are what `FGM_OPT_CHUNKED_BATCH=0` runs.
+9. **`FGM_OPT_NEAREST_FIRST`**. The removals and the additions of a split batch are ordered by
+   their distance from the camera target, so what the user looks at is finished first. What is
+   left of an earlier batch is ordered again when the next one is merged.
+10. **`FGM_OPT_RECYCLE_MARKERS`**. Within a batch applied in slices, a removal and the addition
+    whose turn is next are one operation: the `GMSMarker` of the marker that goes stays on the
+    map and takes the identifier and the properties of the marker that comes. No detach, no
+    allocation, no attach. The reason is in the SDK: every attach and detach ends in its usage
+    log (`-[GMSMapsSDKLogger addEvent:]`), which writes the last known map instance to the user
+    defaults and so posts a defaults-changed notification, every time; that log was two thirds of
+    a batch. Not for a marker of a cluster manager and not for one that is not visible.
+11. **`FGM_OPT_SKIP_UNCHANGED`** (`updateMarker:fromPlatformMarker:…`). A property that already
+    holds the value is not set again (the SDK logs a usage event in the setters of `draggable`,
+    `rotation` and `opacity` whatever the value), and a marker that is on the map is not
+    attached to it again.
+12. **`FGM_OPT_ICON_DESCRIPTION`** (`FGMImageUtils.m`). An icon from the cache is an
+    `FGMDescribedImage`, a `UIImage` subclass over the same bitmap that keeps the string
+    `-description` returned the first time. The SDK asks a marker's image for its description
+    whenever it draws a marker that is new or has changed, and `UIImage` formats it on every call.
+13. `FGMPerf` also logs, per batch, the slices (`slices`, `work_ms`, `max_slice_ms`), the batches
+    merged into it, the recycled markers and the frames the display link saw, and a display link
+    of its own logs every gap of two frames or more between its callbacks as a `[FGMPerf] hitch`
+    line: that gap, not `total_ms`, is how long the main thread did not answer.
+
+### What an app sees of a batch applied in slices
+
+- `updateMarkers` returns after the first slice. The markers of a large batch are on the map a
+  few frames later, not when the call returns.
+- An info window call (`showMarkerInfoWindow`, `hideMarkerInfoWindow`,
+  `isMarkerInfoWindowShown`) for a marker whose addition or change is still waiting carries that
+  one operation out first, so it behaves as if the batch had been applied whole.
+- A marker whose removal is waiting is still on the map for a few frames. A tap on it, on its
+  info window, or a drag of it is not sent to Dart, which no longer knows the marker; an info
+  window call for it answers "Invalid markerId", as it would after the removal.
+- A recycled marker is the same `GMSMarker` object with another identifier. Its info window is
+  closed if it was open, its title and snippet are those of the new marker.
+- The markers passed with the creation of the map (`initialMarkers`) are added in one piece, as
+  upstream adds them.
+
 ### What holds memory, and how much
 
 | What | Holds | Limit | Released |
 |---|---|---|---|
 | Icon cache, one per asset provider (one per map) | `UIImage` by descriptor key | 256 images (`NSCache.countLimit`) | by `NSCache` on a memory warning; with the asset provider when the map goes |
+| Waiting marker operations, one queue per markers controller | the `FGMPlatformMarker`s and identifiers of batches not applied yet | what the Dart side sent and a few frames have not worked off; a later batch drops what it undoes | slice by slice; with the markers controller when the map goes (the display link holds a ticker that holds the controller weakly) |
 
 The cache is an associated object of the asset provider and holds images only, so it adds no
 reference to the map view, a marker or a controller; `FGMMarkerController.mapView` and
-`FGMMarkersController.mapView` stay `weak` as upstream has them. There is no pool of markers.
+`FGMMarkersController.mapView` stay `weak` as upstream has them. There is no pool of markers:
+a recycled marker goes straight from the marker that leaves to the marker that comes, within
+one operation, and a marker that leaves with nothing to come is released as before.
 
 ### The key of the icon cache
 
@@ -111,6 +165,17 @@ Everything that decides the image is in the key; the screen scale is in every ke
 - The switches are environment variables, so on a device they can be set only by whoever starts
   the process (Xcode, `devicectl`). They are a tool for measuring and for finding a fault, not a
   setting of the app.
+- The slices run from a display link, which the system pauses while the app is in the
+  background: a batch that was being applied then waits and goes on when the app is back.
+- A marker that is added without one leaving (the first load of a country) cannot be recycled
+  and pays the SDK's usage log in full, 0.2 to 0.25 ms per marker on an iPad (6th generation).
+  The log is inside the SDK (`GMSMapsClearcutClient setLastKnownMapInstanceID:`); the fork does
+  not touch the SDK's private classes.
+- What the SDK draws per changed marker (a new sprite, 0.08 ms on that iPad) is the larger half
+  of a pan now and is not reachable from the plugin.
+- If adding a marker throws inside a slice that the display link runs, the exception ends the
+  process from the display link's callback instead of from the Pigeon handler; it ended the
+  process before as well.
 
 ## How RedMap consumes it
 
