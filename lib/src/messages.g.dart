@@ -1934,6 +1934,7 @@ class PlatformMapConfiguration {
     required this.markerType,
     this.mapId,
     this.style,
+    this.accessibilityElementsHidden,
   });
 
   bool? compassEnabled;
@@ -1972,6 +1973,10 @@ class PlatformMapConfiguration {
 
   String? style;
 
+  /// Whether the map hides its accessibility elements (the map and its
+  /// markers) from VoiceOver. Fork-specific; null means "leave unchanged".
+  bool? accessibilityElementsHidden;
+
   List<Object?> _toList() {
     return <Object?>[
       compassEnabled,
@@ -1992,6 +1997,7 @@ class PlatformMapConfiguration {
       markerType,
       mapId,
       style,
+      accessibilityElementsHidden,
     ];
   }
 
@@ -2020,6 +2026,7 @@ class PlatformMapConfiguration {
       markerType: result[15]! as PlatformMarkerType,
       mapId: result[16] as String?,
       style: result[17] as String?,
+      accessibilityElementsHidden: result[18] as bool?,
     );
   }
 
@@ -2049,7 +2056,8 @@ class PlatformMapConfiguration {
         _deepEquals(buildingsEnabled, other.buildingsEnabled) &&
         _deepEquals(markerType, other.markerType) &&
         _deepEquals(mapId, other.mapId) &&
-        _deepEquals(style, other.style);
+        _deepEquals(style, other.style) &&
+        _deepEquals(accessibilityElementsHidden, other.accessibilityElementsHidden);
   }
 
   @override
@@ -2058,7 +2066,7 @@ class PlatformMapConfiguration {
 
   @override
   String toString() {
-    return 'PlatformMapConfiguration(compassEnabled: $compassEnabled, cameraTargetBounds: $cameraTargetBounds, mapType: $mapType, minMaxZoomPreference: $minMaxZoomPreference, rotateGesturesEnabled: $rotateGesturesEnabled, scrollGesturesEnabled: $scrollGesturesEnabled, tiltGesturesEnabled: $tiltGesturesEnabled, trackCameraPosition: $trackCameraPosition, zoomGesturesEnabled: $zoomGesturesEnabled, myLocationEnabled: $myLocationEnabled, myLocationButtonEnabled: $myLocationButtonEnabled, padding: $padding, indoorViewEnabled: $indoorViewEnabled, trafficEnabled: $trafficEnabled, buildingsEnabled: $buildingsEnabled, markerType: $markerType, mapId: $mapId, style: $style)';
+    return 'PlatformMapConfiguration(compassEnabled: $compassEnabled, cameraTargetBounds: $cameraTargetBounds, mapType: $mapType, minMaxZoomPreference: $minMaxZoomPreference, rotateGesturesEnabled: $rotateGesturesEnabled, scrollGesturesEnabled: $scrollGesturesEnabled, tiltGesturesEnabled: $tiltGesturesEnabled, trackCameraPosition: $trackCameraPosition, zoomGesturesEnabled: $zoomGesturesEnabled, myLocationEnabled: $myLocationEnabled, myLocationButtonEnabled: $myLocationButtonEnabled, padding: $padding, indoorViewEnabled: $indoorViewEnabled, trafficEnabled: $trafficEnabled, buildingsEnabled: $buildingsEnabled, markerType: $markerType, mapId: $mapId, style: $style, accessibilityElementsHidden: $accessibilityElementsHidden)';
   }
 }
 

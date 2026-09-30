@@ -639,6 +639,13 @@
   if (style) {
     [self setMapStyle:style];
   }
+  // Fork-specific. While the elements are hidden the SDK stops rebuilding its accessibility
+  // items after every marker change and camera move, and the marker batch in
+  // updateMarkersByAdding: skips its own accessibility handling.
+  NSNumber *accessibilityElementsHidden = config.accessibilityElementsHidden;
+  if (accessibilityElementsHidden != nil) {
+    self.mapView.accessibilityElementsHidden = accessibilityElementsHidden.boolValue;
+  }
 }
 
 #pragma mark - FGMTileProviderDelegate

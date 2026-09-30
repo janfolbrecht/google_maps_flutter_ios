@@ -325,9 +325,80 @@ class AccessibilityRecordingMapView: GMSMapView {
     #expect(mapView.accessibilityElementsHidden)
   }
 
+  // RedMap fork: accessibility elements hidden through the map configuration.
+
+  private func accessibilityRecordingController(
+    creationParameters: FGMPlatformMapViewCreationParams
+  ) -> (FGMGoogleMapController, AccessibilityRecordingMapView) {
+    let options = GMSMapViewOptions()
+    options.frame = CGRect(x: 0, y: 0, width: 100, height: 100)
+    options.camera = GMSCameraPosition(latitude: 0, longitude: 0, zoom: 0)
+    let mapView = AccessibilityRecordingMapView(options: options)
+    let controller = FGMGoogleMapController(
+      mapView: mapView,
+      viewIdentifier: 0,
+      creationParameters: creationParameters,
+      assetProvider: TestAssetProvider(),
+      binaryMessenger: StubBinaryMessenger()
+    )
+    return (controller, mapView)
+  }
+
+  @Test func creationConfigurationHidesAccessibilityElements() {
+    let (controller, mapView) = accessibilityRecordingController(
+      creationParameters: emptyCreationParameters(accessibilityElementsHidden: true))
+
+    #expect(mapView.accessibilityElementsHidden)
+
+    // The marker batch sees the elements hidden and leaves them alone.
+    mapView.hiddenValues = []
+    var error: FlutterError? = nil
+    controller.callHandler.updateMarkers(
+      byAdding: [marker("a")], changing: [], removing: [], error: &error)
+
+    #expect(error == nil)
+    #expect(mapView.hiddenValues.isEmpty)
+    #expect(mapView.accessibilityElementsHidden)
+  }
+
+  @Test func creationConfigurationWithoutValueLeavesAccessibilityElementsEnabled() {
+    let (_, mapView) = accessibilityRecordingController(
+      creationParameters: emptyCreationParameters(accessibilityElementsHidden: nil))
+
+    #expect(!mapView.accessibilityElementsHidden)
+  }
+
+  @Test func configurationUpdateWithoutValueLeavesHiddenAccessibilityElementsHidden() {
+    let (controller, mapView) = accessibilityRecordingController(
+      creationParameters: emptyCreationParameters(accessibilityElementsHidden: true))
+    mapView.hiddenValues = []
+
+    var error: FlutterError? = nil
+    controller.callHandler.update(
+      with: emptyMapConfiguration(accessibilityElementsHidden: nil), error: &error)
+
+    #expect(error == nil)
+    #expect(mapView.hiddenValues.isEmpty)
+    #expect(mapView.accessibilityElementsHidden)
+  }
+
+  @Test func configurationUpdateCanShowAccessibilityElementsAgain() {
+    let (controller, mapView) = accessibilityRecordingController(
+      creationParameters: emptyCreationParameters(accessibilityElementsHidden: true))
+
+    var error: FlutterError? = nil
+    controller.callHandler.update(
+      with: emptyMapConfiguration(accessibilityElementsHidden: false), error: &error)
+
+    #expect(error == nil)
+    #expect(!mapView.accessibilityElementsHidden)
+  }
+
   /// Creates an empty creation parameters object for tests where the values don't matter, just that
   /// there's a valid object to pass in.
-  private func emptyCreationParameters() -> FGMPlatformMapViewCreationParams {
+  private func emptyCreationParameters(
+    accessibilityElementsHidden: NSNumber? = nil
+  ) -> FGMPlatformMapViewCreationParams {
     return FGMPlatformMapViewCreationParams.make(
       withInitialCameraPosition: FGMPlatformCameraPosition.make(
         withBearing: 0.0,
@@ -335,26 +406,8 @@ class AccessibilityRecordingMapView: GMSMapView {
         tilt: 0.0,
         zoom: 0.0
       ),
-      mapConfiguration: FGMPlatformMapConfiguration.make(
-        withCompassEnabled: nil,
-        cameraTargetBounds: nil,
-        mapType: nil,
-        minMaxZoomPreference: nil,
-        rotateGesturesEnabled: nil,
-        scrollGesturesEnabled: nil,
-        tiltGesturesEnabled: nil,
-        trackCameraPosition: nil,
-        zoomGesturesEnabled: nil,
-        myLocationEnabled: nil,
-        myLocationButtonEnabled: nil,
-        padding: nil,
-        indoorViewEnabled: nil,
-        trafficEnabled: nil,
-        buildingsEnabled: nil,
-        markerType: .marker,
-        mapId: nil,
-        style: nil
-      ),
+      mapConfiguration: emptyMapConfiguration(
+        accessibilityElementsHidden: accessibilityElementsHidden),
       initialCircles: [],
       initialMarkers: [],
       initialPolygons: [],
@@ -363,6 +416,33 @@ class AccessibilityRecordingMapView: GMSMapView {
       initialTileOverlays: [],
       initialClusterManagers: [],
       initialGroundOverlays: []
+    )
+  }
+
+  /// Creates a map configuration that changes nothing but, optionally, the accessibility elements.
+  private func emptyMapConfiguration(
+    accessibilityElementsHidden: NSNumber? = nil
+  ) -> FGMPlatformMapConfiguration {
+    return FGMPlatformMapConfiguration.make(
+      withCompassEnabled: nil,
+      cameraTargetBounds: nil,
+      mapType: nil,
+      minMaxZoomPreference: nil,
+      rotateGesturesEnabled: nil,
+      scrollGesturesEnabled: nil,
+      tiltGesturesEnabled: nil,
+      trackCameraPosition: nil,
+      zoomGesturesEnabled: nil,
+      myLocationEnabled: nil,
+      myLocationButtonEnabled: nil,
+      padding: nil,
+      indoorViewEnabled: nil,
+      trafficEnabled: nil,
+      buildingsEnabled: nil,
+      markerType: .marker,
+      mapId: nil,
+      style: nil,
+      accessibilityElementsHidden: accessibilityElementsHidden
     )
   }
 }

@@ -470,6 +470,7 @@ class PlatformMapConfiguration {
     required this.markerType,
     required this.mapId,
     required this.style,
+    required this.accessibilityElementsHidden,
   });
 
   final bool? compassEnabled;
@@ -490,6 +491,10 @@ class PlatformMapConfiguration {
   final PlatformMarkerType markerType;
   final String? mapId;
   final String? style;
+
+  /// Whether the map hides its accessibility elements (the map and its
+  /// markers) from VoiceOver. Fork-specific; null means "leave unchanged".
+  final bool? accessibilityElementsHidden;
 }
 
 /// Pigeon representation of an x,y coordinate.

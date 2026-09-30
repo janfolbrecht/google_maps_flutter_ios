@@ -1311,6 +1311,112 @@ void main() {
       );
     });
   });
+
+  group('accessibilityElementsHidden', () {
+    tearDown(() => GoogleMapsFlutterIOS.accessibilityElementsHidden = false);
+
+    Future<bool?> getAccessibilityElementsHiddenFromCreationParams(
+      WidgetTester tester, {
+      bool legacyBuild = false,
+    }) async {
+      final passedValueCompleter = Completer<bool?>();
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform_views,
+        (MethodCall methodCall) {
+          if (methodCall.method == 'create') {
+            final args = Map<String, dynamic>.from(methodCall.arguments as Map<dynamic, dynamic>);
+            if (args.containsKey('params')) {
+              final paramsUint8List = args['params'] as Uint8List;
+              final byteData = ByteData.sublistView(paramsUint8List);
+              final creationParams =
+                  MapsApi.pigeonChannelCodec.decodeMessage(byteData)
+                      as PlatformMapViewCreationParams?;
+              if (creationParams != null && !passedValueCompleter.isCompleted) {
+                passedValueCompleter.complete(
+                  creationParams.mapConfiguration.accessibilityElementsHidden,
+                );
+              }
+            }
+          }
+          return null;
+        },
+      );
+
+      final maps = GoogleMapsFlutterIOS();
+      const initialCameraPosition = CameraPosition(target: LatLng(0, 0), zoom: 1);
+
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: legacyBuild
+              ? maps.buildViewWithTextDirection(
+                  1,
+                  (int id) {},
+                  initialCameraPosition: initialCameraPosition,
+                  textDirection: TextDirection.ltr,
+                )
+              : maps.buildViewWithConfiguration(
+                  1,
+                  (int id) {},
+                  widgetConfiguration: const MapWidgetConfiguration(
+                    initialCameraPosition: initialCameraPosition,
+                    textDirection: TextDirection.ltr,
+                  ),
+                ),
+        ),
+      );
+
+      return passedValueCompleter.future;
+    }
+
+    test('defaults to false', () {
+      expect(GoogleMapsFlutterIOS.accessibilityElementsHidden, isFalse);
+    });
+
+    testWidgets('passes false on creation by default', (WidgetTester tester) async {
+      expect(await getAccessibilityElementsHiddenFromCreationParams(tester), false);
+    });
+
+    testWidgets('passes true on creation when set', (WidgetTester tester) async {
+      GoogleMapsFlutterIOS.accessibilityElementsHidden = true;
+
+      expect(await getAccessibilityElementsHiddenFromCreationParams(tester), true);
+    });
+
+    testWidgets('passes true on legacy creation when set', (WidgetTester tester) async {
+      GoogleMapsFlutterIOS.accessibilityElementsHidden = true;
+
+      expect(
+        await getAccessibilityElementsHiddenFromCreationParams(tester, legacyBuild: true),
+        true,
+      );
+    });
+
+    test('updateMapConfiguration leaves it null', () async {
+      GoogleMapsFlutterIOS.accessibilityElementsHidden = true;
+      const mapId = 1;
+      final (GoogleMapsFlutterIOS maps, MockMapsApi api) = setUpMockMap(mapId: mapId);
+
+      await maps.updateMapConfiguration(const MapConfiguration(compassEnabled: true), mapId: mapId);
+
+      final VerificationResult verification = verify(api.updateMapConfiguration(captureAny));
+      final passedConfig = verification.captured[0] as PlatformMapConfiguration;
+      expect(passedConfig.accessibilityElementsHidden, isNull);
+    });
+
+    test('updateMapOptions leaves it null', () async {
+      GoogleMapsFlutterIOS.accessibilityElementsHidden = true;
+      const mapId = 1;
+      final (GoogleMapsFlutterIOS maps, MockMapsApi api) = setUpMockMap(mapId: mapId);
+
+      await maps.updateMapOptions(<String, Object?>{'compassEnabled': true}, mapId: mapId);
+
+      final VerificationResult verification = verify(api.updateMapConfiguration(captureAny));
+      final passedConfig = verification.captured[0] as PlatformMapConfiguration;
+      expect(passedConfig.accessibilityElementsHidden, isNull);
+    });
+  });
 }
 
 void _expectColorsEqual(PlatformColor actual, Color expected) {

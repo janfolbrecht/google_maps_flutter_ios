@@ -46,6 +46,13 @@ class GoogleMapsFlutterIOS extends GoogleMapsFlutterPlatform {
   GoogleMapsFlutterIOS({@visibleForTesting MapsApi Function(int mapId)? apiProvider})
     : _apiProvider = apiProvider ?? _productionApiProvider;
 
+  /// When true, maps created from now on hide their accessibility elements (markers, the map
+  /// itself) from VoiceOver. The SDK then stops rebuilding its accessibility items after every
+  /// marker change and camera move. Read when a map view is created; defaults to false.
+  ///
+  /// Fork-specific; not part of the upstream plugin.
+  static bool accessibilityElementsHidden = false;
+
   /// Registers the iOS implementation of GoogleMapsFlutterPlatform.
   static void registerWith() {
     GoogleMapsFlutterPlatform.instance = GoogleMapsFlutterIOS();
@@ -422,6 +429,9 @@ class GoogleMapsFlutterIOS extends GoogleMapsFlutterPlatform {
       ),
       'On iOS zoom level must be set when position is set for ground overlays.',
     );
+
+    // Only applied at creation; configuration updates leave it null ("unchanged").
+    mapConfiguration.accessibilityElementsHidden = accessibilityElementsHidden;
 
     final creationParams = PlatformMapViewCreationParams(
       initialCameraPosition: _platformCameraPositionFromCameraPosition(

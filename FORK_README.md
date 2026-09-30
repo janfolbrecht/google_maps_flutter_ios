@@ -61,6 +61,15 @@ The fork proceeds in the order: **measure first, then optimise only what the num
 6. Native tests of both in `example/ios/RunnerTests` (`GoogleMapsTests.swift`,
    `ExtractIconFromDataTests.swift`), added to the upstream files so that the Xcode project is
    untouched.
+7. **`GoogleMapsFlutterIOS.accessibilityElementsHidden`** (Dart, static, default `false`) and the
+   Pigeon field `PlatformMapConfiguration.accessibilityElementsHidden`. An app that sets the
+   property before a map is created gets that map with its accessibility elements hidden:
+   `_buildView` puts the value into the creation configuration, `interpretMapConfiguration:`
+   applies it right after upstream's `accessibilityElementsHidden = NO`. Configuration updates
+   send `null`, which leaves the map as it is. With the elements hidden for good the SDK no longer
+   rebuilds the accessibility items after a marker change, a camera move or a cluster marker, and
+   `FGM_OPT_AX_BATCH` stands aside. The price is that VoiceOver does not see the map or its
+   markers. RedMap sets it to `true` in `main.dart`.
 
 ### What holds memory, and how much
 
@@ -89,9 +98,10 @@ Everything that decides the image is in the key; the screen scale is in every ke
 ### Known limits
 
 - With clustering on, the cluster renderer attaches its markers outside the batch, with the
-  accessibility elements enabled. `FGM_OPT_AX_BATCH` does not reach that.
-- The SDK also rebuilds the accessibility items on every move of the camera. The fork does not
-  change that.
+  accessibility elements enabled. `FGM_OPT_AX_BATCH` does not reach that; only
+  `accessibilityElementsHidden` (item 7) does.
+- The SDK also rebuilds the accessibility items on every move of the camera. Only
+  `accessibilityElementsHidden` (item 7) avoids that.
 - If adding a marker throws inside a batch (`InvalidByteDescriptor` from an undecodable bytes
   descriptor), the elements stay hidden. There is deliberately no `@finally`: the Pigeon handler
   does not catch the exception either, so it ends the process before anybody could see the map.
@@ -115,7 +125,8 @@ dependency_overrides:
 ```
 
 Verify with `flutter pub deps | grep google_maps_flutter_ios`: the source must be `git`, not
-`hosted`.
+`hosted`. The package is also a direct dependency (`^2.18.6`) because `main.dart` imports it to
+set `GoogleMapsFlutterIOS.accessibilityElementsHidden`; the override decides the source.
 
 ## Upstream
 
@@ -132,6 +143,13 @@ text a pull request would start from:
   on the checklist of the pull request template, the AI contribution guidelines among it.
 
 ## Maintenance
+
+- Regenerating the Pigeon files: `dart run pigeon --input pigeons/messages.dart`, then
+  `dart format -l 100 lib/src/messages.g.dart` and
+  `clang-format -i --style="{BasedOnStyle: Google, ColumnLimit: 100}"` on the generated `.g.h` and
+  `.g.m` (clang-format 19 or older; 23 wraps a few `NSCAssert`s differently). Upstream formats with
+  its repository-wide settings, which this extracted directory does not carry, so raw Pigeon
+  output differs from the committed files in every line it would have reformatted.
 
 - Upstream states (README, 2.18.5) that `google_maps_flutter_ios` **receives no new feature
   updates**; the maintained implementations are the SDK-specific `google_maps_flutter_ios_sdk9`

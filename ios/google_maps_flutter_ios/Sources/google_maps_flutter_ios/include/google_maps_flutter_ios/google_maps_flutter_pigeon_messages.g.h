@@ -573,7 +573,8 @@ typedef NS_ENUM(NSUInteger, FGMPlatformMapBitmapScaling) {
                       buildingsEnabled:(nullable NSNumber *)buildingsEnabled
                             markerType:(FGMPlatformMarkerType)markerType
                                  mapId:(nullable NSString *)mapId
-                                 style:(nullable NSString *)style;
+                                 style:(nullable NSString *)style
+           accessibilityElementsHidden:(nullable NSNumber *)accessibilityElementsHidden;
 @property(nonatomic, strong, nullable) NSNumber *compassEnabled;
 @property(nonatomic, strong, nullable) FGMPlatformCameraTargetBounds *cameraTargetBounds;
 @property(nonatomic, strong, nullable) FGMPlatformMapTypeBox *mapType;
@@ -592,6 +593,9 @@ typedef NS_ENUM(NSUInteger, FGMPlatformMapBitmapScaling) {
 @property(nonatomic, assign) FGMPlatformMarkerType markerType;
 @property(nonatomic, copy, nullable) NSString *mapId;
 @property(nonatomic, copy, nullable) NSString *style;
+/// Whether the map hides its accessibility elements (the map and its
+/// markers) from VoiceOver. Fork-specific; null means "leave unchanged".
+@property(nonatomic, strong, nullable) NSNumber *accessibilityElementsHidden;
 @end
 
 /// Pigeon representation of an x,y coordinate.
