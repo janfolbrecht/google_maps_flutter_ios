@@ -468,7 +468,8 @@ import Testing
     let assetProvider = TestAssetProvider(
       image: createOnePixelImage(), forAssetName: assetName, package: nil)
     func icon(_ bitmap: FGMPlatformBitmapAssetMap, screenScale: CGFloat = 3.0) -> UIImage? {
-      return FGMIconFromBitmap(FGMPlatformBitmap.make(withBitmap: bitmap), assetProvider, screenScale)
+      return FGMIconFromBitmap(
+        FGMPlatformBitmap.make(withBitmap: bitmap), assetProvider, screenScale)
     }
 
     let unsized = try #require(icon(assetBitmap(assetName, width: nil, height: nil)))

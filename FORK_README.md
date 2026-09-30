@@ -92,6 +92,12 @@ Everything that decides the image is in the key; the screen scale is in every ke
   accessibility elements enabled. `FGM_OPT_AX_BATCH` does not reach that.
 - The SDK also rebuilds the accessibility items on every move of the camera. The fork does not
   change that.
+- If adding a marker throws inside a batch (`InvalidByteDescriptor` from an undecodable bytes
+  descriptor), the elements stay hidden. There is deliberately no `@finally`: the Pigeon handler
+  does not catch the exception either, so it ends the process before anybody could see the map.
+- `FGM_OPT_AX_BATCH` was checked by counting the SDK's accessibility items after each batch, not
+  with VoiceOver running. Before relying on it for VoiceOver users, try it once on a device with
+  VoiceOver on: the markers of a new batch must be reachable by swiping.
 - The switches are environment variables, so on a device they can be set only by whoever starts
   the process (Xcode, `devicectl`). They are a tool for measuring and for finding a fault, not a
   setting of the app.
