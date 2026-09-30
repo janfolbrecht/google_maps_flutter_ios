@@ -18,6 +18,58 @@ static CFTimeInterval gBatchStart;
 static CFTimeInterval gPreviousBatchEnd;
 static NSUInteger gBatchSequence;
 static NSUInteger gToAdd, gToChange, gToRemove;
+// Slices of a chunked batch, and what the display link saw between its begin and its end.
+static NSUInteger gSlices, gSliceOperations, gMergedBatches;
+static CFTimeInterval gSliceSeconds, gLongestSlice;
+static BOOL gBatchInProgress;
+static NSUInteger gFramesInBatch;
+static CFTimeInterval gLongestFrameGapInBatch;
+
+/// A gap between two callbacks of the display link from which on it is logged: two frames of a
+/// 60 Hz display.
+static const CFTimeInterval kFGMPerfHitchThreshold = 0.034;
+
+/// Watches the main thread with a display link. The link fires once per frame as long as the
+/// main run loop turns, so the time between two callbacks is how long the main thread was busy
+/// with something else.
+@interface FGMPerfFrameMonitor : NSObject
+@end
+
+@implementation FGMPerfFrameMonitor {
+  CFTimeInterval _previousCallback;
+}
+
++ (void)start {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    static FGMPerfFrameMonitor *monitor;
+    if (monitor != nil) {
+      return;
+    }
+    monitor = [[FGMPerfFrameMonitor alloc] init];
+    CADisplayLink *link = [CADisplayLink displayLinkWithTarget:monitor selector:@selector(frame:)];
+    [link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+  });
+}
+
+- (void)frame:(CADisplayLink *)link {
+  CFTimeInterval now = CACurrentMediaTime();
+  if (_previousCallback > 0) {
+    CFTimeInterval gap = now - _previousCallback;
+    if (gBatchInProgress) {
+      gFramesInBatch += 1;
+      if (gap > gLongestFrameGapInBatch) {
+        gLongestFrameGapInBatch = gap;
+      }
+    }
+    if (gap >= kFGMPerfHitchThreshold) {
+      // t_end is on the clock of t_begin and t_end of the batch lines.
+      NSLog(@"[FGMPerf] hitch gap_ms=%.1f t_end=%.4f", gap * 1000.0, now);
+    }
+  }
+  _previousCallback = now;
+}
+
+@end
 
 BOOL FGMPerfEnabled(void) {
   static BOOL enabled = NO;
@@ -27,8 +79,11 @@ BOOL FGMPerfEnabled(void) {
     enabled = [value isEqualToString:@"1"];
     if (enabled) {
       NSLog(@"[FGMPerf] enabled=1 clock=CACurrentMediaTime units=ms opt_ax_batch=%d "
-            @"opt_icon_cache=%d",
-            FGMOptAccessibilityBatchEnabled(), FGMOptIconCacheEnabled());
+            @"opt_icon_cache=%d opt_chunked_batch=%d chunk_budget_ms=%.1f chunk_pacing=%@",
+            FGMOptAccessibilityBatchEnabled(), FGMOptIconCacheEnabled(),
+            FGMOptChunkedBatchEnabled(), FGMOptChunkBudget() * 1000.0,
+            FGMOptChunkPacingIsFrame() ? @"frame" : @"queue");
+      [FGMPerfFrameMonitor start];
     }
   });
   return enabled;
@@ -48,8 +103,39 @@ void FGMPerfBeginBatch(NSUInteger toAdd, NSUInteger toChange, NSUInteger toRemov
   gToAdd = toAdd;
   gToChange = toChange;
   gToRemove = toRemove;
+  gSlices = 0;
+  gSliceOperations = 0;
+  gMergedBatches = 0;
+  gSliceSeconds = 0;
+  gLongestSlice = 0;
+  gFramesInBatch = 0;
+  gLongestFrameGapInBatch = 0;
+  gBatchInProgress = YES;
   gBatchSequence += 1;
   gBatchStart = CACurrentMediaTime();
+}
+
+void FGMPerfMergeBatch(NSUInteger toAdd, NSUInteger toChange, NSUInteger toRemove) {
+  if (!FGMPerfEnabled()) {
+    return;
+  }
+  gToAdd += toAdd;
+  gToChange += toChange;
+  gToRemove += toRemove;
+  gMergedBatches += 1;
+}
+
+void FGMPerfRecordSlice(CFTimeInterval startedAt, NSUInteger operations) {
+  if (!FGMPerfEnabled()) {
+    return;
+  }
+  CFTimeInterval seconds = CACurrentMediaTime() - startedAt;
+  gSlices += 1;
+  gSliceOperations += operations;
+  gSliceSeconds += seconds;
+  if (seconds > gLongestSlice) {
+    gLongestSlice = seconds;
+  }
 }
 
 void FGMPerfRecordPass(FGMPerfPass pass, CFTimeInterval startedAt) {
@@ -101,6 +187,14 @@ void FGMPerfEndBatch(NSUInteger totalMarkers) {
   // means Dart pushed the pan as several updates rather than one.
   double gapMs = gPreviousBatchEnd > 0 ? FGMPerfMilliseconds(gBatchStart - gPreviousBatchEnd) : -1;
   gPreviousBatchEnd = end;
+  gBatchInProgress = NO;
+  // A batch applied in one piece is one slice as long as the batch.
+  if (gSlices == 0) {
+    gSlices = 1;
+    gSliceOperations = gToAdd + gToChange + gToRemove;
+    gSliceSeconds = total;
+    gLongestSlice = total;
+  }
 
   CFTimeInterval accounted = 0;
   for (NSUInteger i = 0; i < FGMPerfPhaseCount; i++) {
@@ -121,7 +215,9 @@ void FGMPerfEndBatch(NSUInteger totalMarkers) {
         @"update_rest_ms=%.2f update_rest_n=%lu "
         @"cluster_ms=%.2f cluster_n=%lu "
         @"unaccounted_ms=%.2f "
-        @"ax_refresh_ms=%.2f ax_refresh_n=%lu",
+        @"ax_refresh_ms=%.2f ax_refresh_n=%lu "
+        @"slices=%lu slice_ops=%lu work_ms=%.2f max_slice_ms=%.2f merged=%lu "
+        @"frames=%lu max_frame_gap_ms=%.2f t_begin=%.4f t_end=%.4f",
         (unsigned long)gBatchSequence, FGMPerfMilliseconds(total), gapMs, (unsigned long)gToAdd,
         (unsigned long)gToChange, (unsigned long)gToRemove, (unsigned long)totalMarkers,
         FGMPerfMilliseconds(gPassSeconds[FGMPerfPassAdd]),
@@ -146,7 +242,11 @@ void FGMPerfEndBatch(NSUInteger totalMarkers) {
         (unsigned long)gPhaseCalls[FGMPerfPhaseUpdateRest],
         FGMPerfMilliseconds(gPhaseSeconds[FGMPerfPhaseCluster]),
         (unsigned long)gPhaseCalls[FGMPerfPhaseCluster],
-        FGMPerfMilliseconds(total - accounted),
+        FGMPerfMilliseconds(gSliceSeconds - accounted),
         FGMPerfMilliseconds(gPhaseSeconds[FGMPerfPhaseAccessibilityRefresh]),
-        (unsigned long)gPhaseCalls[FGMPerfPhaseAccessibilityRefresh]);
+        (unsigned long)gPhaseCalls[FGMPerfPhaseAccessibilityRefresh], (unsigned long)gSlices,
+        (unsigned long)gSliceOperations, FGMPerfMilliseconds(gSliceSeconds),
+        FGMPerfMilliseconds(gLongestSlice), (unsigned long)gMergedBatches,
+        (unsigned long)gFramesInBatch, FGMPerfMilliseconds(gLongestFrameGapInBatch), gBatchStart,
+        end);
 }

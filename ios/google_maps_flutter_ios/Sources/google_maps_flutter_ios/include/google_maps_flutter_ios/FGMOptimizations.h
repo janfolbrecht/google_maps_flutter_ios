@@ -20,4 +20,17 @@ BOOL FGMOptAccessibilityBatchEnabled(void);
 /// to every marker that asks for an equal descriptor, instead of making it again per marker.
 BOOL FGMOptIconCacheEnabled(void);
 
+/// `FGM_OPT_CHUNKED_BATCH`: apply a marker batch in slices of a few milliseconds with the run loop
+/// turning between them, so that the map answers touches and draws while the markers arrive,
+/// instead of in one piece on the main thread.
+BOOL FGMOptChunkedBatchEnabled(void);
+
+/// `FGM_OPT_CHUNK_BUDGET_MS`: the time one slice of a chunked batch may take, in seconds. 8 ms
+/// unless the variable holds another positive number of milliseconds. A knob for measuring.
+CFTimeInterval FGMOptChunkBudget(void);
+
+/// `FGM_OPT_CHUNK_PACING=frame`: run one slice per frame of the display instead of one per turn
+/// of the main queue. A knob for measuring; the default is the main queue.
+BOOL FGMOptChunkPacingIsFrame(void);
+
 NS_ASSUME_NONNULL_END

@@ -28,3 +28,33 @@ BOOL FGMOptIconCacheEnabled(void) {
   });
   return enabled;
 }
+
+BOOL FGMOptChunkedBatchEnabled(void) {
+  static BOOL enabled;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    enabled = FGMOptIsOn(@"FGM_OPT_CHUNKED_BATCH");
+  });
+  return enabled;
+}
+
+CFTimeInterval FGMOptChunkBudget(void) {
+  static CFTimeInterval budget;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    double milliseconds =
+        [NSProcessInfo.processInfo.environment[@"FGM_OPT_CHUNK_BUDGET_MS"] doubleValue];
+    budget = (milliseconds > 0 ? milliseconds : 8.0) / 1000.0;
+  });
+  return budget;
+}
+
+BOOL FGMOptChunkPacingIsFrame(void) {
+  static BOOL frame;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    frame = [NSProcessInfo.processInfo.environment[@"FGM_OPT_CHUNK_PACING"]
+        isEqualToString:@"frame"];
+  });
+  return frame;
+}

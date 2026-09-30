@@ -28,4 +28,16 @@
 /// A mapping from marker identifiers to corresponding marker controllers.
 @property(strong, nonatomic, readonly) NSMutableDictionary *markerIdentifierToController;
 
+// RedMap fork, FGM_OPT_CHUNKED_BATCH.
+
+/// The time one slice of a batch may take, in seconds. Zero makes every slice one operation.
+@property(assign, nonatomic) CFTimeInterval sliceBudget;
+
+/// A batch of up to this many operations that finds nothing waiting is applied whole.
+@property(assign, nonatomic) NSUInteger unsplitOperationLimit;
+
+/// Gets the block that runs the next slice and has to run it later. The main queue by default;
+/// a test keeps the block and runs it when it wants the next slice.
+@property(copy, nonatomic) void (^sliceScheduler)(dispatch_block_t slice);
+
 @end

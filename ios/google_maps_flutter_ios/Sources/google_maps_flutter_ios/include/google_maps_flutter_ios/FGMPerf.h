@@ -10,6 +10,10 @@
 //
 // Timing uses CACurrentMediaTime() and accumulates into static counters; the single NSLog per
 // batch happens in FGMPerfEndBatch(), never inside a per-marker loop.
+//
+// While enabled, a display link on the main run loop also watches how long the main thread goes
+// without answering: every gap of two frames or more between two of its callbacks is logged as a
+// `[FGMPerf] hitch` line, whatever caused it (a marker batch, the Dart side, the SDK drawing).
 
 @import Foundation;
 @import QuartzCore;
@@ -52,6 +56,15 @@ CFTimeInterval FGMPerfNow(void);
 
 /// Marks the start of one marker batch and resets the per-batch accumulators.
 void FGMPerfBeginBatch(NSUInteger toAdd, NSUInteger toChange, NSUInteger toRemove);
+
+/// A batch that arrived while the previous one was still being applied in slices
+/// (`FGM_OPT_CHUNKED_BATCH`). Its sizes are added to the batch in progress, which is logged as
+/// one line when the last slice is done.
+void FGMPerfMergeBatch(NSUInteger toAdd, NSUInteger toChange, NSUInteger toRemove);
+
+/// Records one slice of a chunked batch: the stretch of the main thread from `startedAt` to now,
+/// in which `operations` marker operations were carried out.
+void FGMPerfRecordSlice(CFTimeInterval startedAt, NSUInteger operations);
 
 /// Records the wall time of one of the three list passes (or the clustering pass) of the batch.
 typedef NS_ENUM(NSUInteger, FGMPerfPass) {

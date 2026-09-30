@@ -677,6 +677,7 @@
     _messenger = messenger;
     _pigeonSuffix = suffix;
     _transactionWrapper = [[FGMCATransactionWrapper alloc] init];
+    _appliesMarkerBatchesInSlices = FGMOptChunkedBatchEnabled();
   }
   return self;
 }
@@ -712,6 +713,14 @@
                      changing:(nonnull NSArray<FGMPlatformMarker *> *)toChange
                      removing:(nonnull NSArray<NSString *> *)idsToRemove
                         error:(FlutterError *_Nullable __autoreleasing *_Nonnull)error {
+  if (self.appliesMarkerBatchesInSlices) {
+    // RedMap fork. The batch is applied in slices; everything below, which is the batch in one
+    // piece, has its counterpart in the markers controller.
+    [self.controller.markersController updateMarkersInSlicesByAdding:toAdd
+                                                            changing:toChange
+                                                            removing:idsToRemove];
+    return;
+  }
   FGMPerfBeginBatch(toAdd.count, toChange.count, idsToRemove.count);
   // RedMap fork, FGM_OPT_AX_BATCH. While the map's accessibility elements are enabled, the SDK
   // rebuilds the accessibility items of every marker on the map after each single marker attached

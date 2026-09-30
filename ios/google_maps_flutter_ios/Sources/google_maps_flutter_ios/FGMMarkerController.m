@@ -7,7 +7,9 @@
 
 #import "FGMConversionUtils.h"
 #import "FGMImageUtils.h"
+#import "FGMMarkerBatchQueue.h"
 #import "FGMMarkerUserData.h"
+#import "FGMOptimizations.h"
 #import "FGMPerf.h"
 
 @interface FGMMarkerController ()
@@ -144,6 +146,32 @@
 @property(weak, nonatomic) GMSMapView *mapView;
 @property(nonatomic) FGMPlatformMarkerType markerType;
 
+// RedMap fork, FGM_OPT_CHUNKED_BATCH.
+/// The operations of the batches that have come and are not applied yet.
+@property(strong, nonatomic) FGMMarkerBatchQueue *waitingOperations;
+/// Whether a slice is on its way through `sliceScheduler`.
+@property(assign, nonatomic) BOOL sliceScheduled;
+/// Whether the batch in progress hid the map's accessibility elements (FGM_OPT_AX_BATCH).
+@property(assign, nonatomic) BOOL batchHidAccessibilityElements;
+/// Runs one slice per frame when the pacing is `frame`; nil between batches.
+@property(strong, nonatomic, nullable) CADisplayLink *sliceDisplayLink;
+@property(assign, nonatomic, readwrite) CFTimeInterval sliceBudget;
+@property(assign, nonatomic, readwrite) NSUInteger unsplitOperationLimit;
+@property(copy, nonatomic, readwrite) void (^sliceScheduler)(dispatch_block_t slice);
+
+/// Runs the slice that `scheduleSlice` asked for.
+- (void)runScheduledSlice;
+
+@end
+
+/// A batch of up to this many operations is applied whole within the call, as upstream does:
+/// about 7 ms on an iPad (6th generation). What a tap on a pin sends is never split.
+static const NSUInteger kFGMUnsplitOperationLimit = 50;
+
+/// The target of the display link of the `frame` pacing, so that the link does not keep the
+/// markers controller alive.
+@interface FGMMarkerSliceTicker : NSObject
+@property(weak, nonatomic) FGMMarkersController *controller;
 @end
 
 @implementation FGMMarkersController
@@ -161,8 +189,18 @@
     _markerIdentifierToController = [[NSMutableDictionary alloc] init];
     _assetProvider = assetProvider;
     _markerType = markerType;
+    _waitingOperations = [[FGMMarkerBatchQueue alloc] init];
+    _sliceBudget = FGMOptChunkBudget();
+    _unsplitOperationLimit = kFGMUnsplitOperationLimit;
+    _sliceScheduler = ^(dispatch_block_t slice) {
+      dispatch_async(dispatch_get_main_queue(), slice);
+    };
   }
   return self;
+}
+
+- (void)dealloc {
+  [_sliceDisplayLink invalidate];
 }
 
 - (void)addMarkers:(NSArray<FGMPlatformMarker *> *)markersToAdd {
@@ -268,9 +306,194 @@
   return self.markerIdentifierToController.count;
 }
 
+#pragma mark - RedMap fork, FGM_OPT_CHUNKED_BATCH
+
+- (NSUInteger)waitingOperationCount {
+  return self.waitingOperations.count;
+}
+
+- (void)updateMarkersInSlicesByAdding:(NSArray<FGMPlatformMarker *> *)toAdd
+                             changing:(NSArray<FGMPlatformMarker *> *)toChange
+                             removing:(NSArray<NSString *> *)idsToRemove {
+  BOOL wasIdle = self.waitingOperations.count == 0;
+  if (wasIdle) {
+    FGMPerfBeginBatch(toAdd.count, toChange.count, idsToRemove.count);
+  } else {
+    FGMPerfMergeBatch(toAdd.count, toChange.count, idsToRemove.count);
+    if (toAdd.count + toChange.count + idsToRemove.count == 0) {
+      // The plugin is called on every rebuild of the widget. An empty batch has nothing to
+      // hurry; the slices go on at their own pace.
+      return;
+    }
+  }
+  CFTimeInterval start = CACurrentMediaTime();
+  [self.waitingOperations mergeBatchByAdding:toAdd
+                                    changing:toChange
+                                    removing:idsToRemove
+                                 existsOnMap:^BOOL(NSString *identifier) {
+                                   return self.markerIdentifierToController[identifier] != nil;
+                                 }];
+  NSUInteger waiting = self.waitingOperations.count;
+  if (wasIdle) {
+    [self beginBatchInSlices:waiting > 0];
+  }
+  // A small batch that starts from an idle queue is applied whole. Otherwise one slice runs now,
+  // so that the change a tap sends is on the screen when the call returns, and the rest follows.
+  [self runSliceOfAtLeast:(wasIdle && waiting <= self.unsplitOperationLimit) ? waiting : 1
+                startedAt:start];
+}
+
+/// What upstream does once before a batch. `hasWork` is NO for an empty batch, which leaves the
+/// accessibility elements alone.
+- (void)beginBatchInSlices:(BOOL)hasWork {
+  GMSMapView *mapView = self.mapView;
+  // FGM_OPT_AX_BATCH, as in the batch applied whole: the elements stay hidden until the last
+  // slice is done. A map whose elements are hidden for good is left alone.
+  self.batchHidAccessibilityElements =
+      hasWork && FGMOptAccessibilityBatchEnabled() && !mapView.accessibilityElementsHidden;
+  if (self.batchHidAccessibilityElements) {
+    mapView.accessibilityElementsHidden = YES;
+  }
+}
+
+/// What upstream does once after a batch: clustering, and the accessibility items.
+- (void)endBatchInSlices {
+  CFTimeInterval perfPassStart = FGMPerfNow();
+  [self.clusterManagersController invokeClusteringForEachClusterManager];
+  FGMPerfRecordPass(FGMPerfPassClusterInvoke, perfPassStart);
+  FGMPerfAccumulateSince(FGMPerfPhaseCluster, perfPassStart);
+  if (self.batchHidAccessibilityElements) {
+    self.batchHidAccessibilityElements = NO;
+    GMSMapView *mapView = self.mapView;
+    mapView.accessibilityElementsHidden = NO;
+    CFTimeInterval perfRefreshStart = FGMPerfNow();
+    GMSMarker *refreshMarker = [[GMSMarker alloc] init];
+    refreshMarker.map = mapView;
+    refreshMarker.map = nil;
+    FGMPerfAccumulateSince(FGMPerfPhaseAccessibilityRefresh, perfRefreshStart);
+  }
+  [self.sliceDisplayLink invalidate];
+  self.sliceDisplayLink = nil;
+}
+
+/// Applies waiting operations until the slice budget, counted from `start`, is used up, and at
+/// least `minimum` of them. Ends the batch when nothing is left, asks for the next slice
+/// otherwise.
+- (void)runSliceOfAtLeast:(NSUInteger)minimum startedAt:(CFTimeInterval)start {
+  NSUInteger done = 0;
+  while (self.waitingOperations.count > 0 &&
+         (done < minimum || CACurrentMediaTime() - start < self.sliceBudget)) {
+    [self applyNextWaitingOperation];
+    done += 1;
+  }
+  if (self.waitingOperations.count > 0) {
+    FGMPerfRecordSlice(start, done);
+    [self scheduleSlice];
+    return;
+  }
+  [self endBatchInSlices];
+  FGMPerfRecordSlice(start, done);
+  FGMPerfEndBatch(self.markerCount);
+}
+
+- (void)applyNextWaitingOperation {
+  FGMPlatformMarker *marker;
+  NSString *identifier;
+  FGMMarkerOperationKind kind = [self.waitingOperations takeNextOperationWithMarker:&marker
+                                                                         identifier:&identifier];
+  [self applyOperation:kind marker:marker identifier:identifier];
+}
+
+- (void)applyOperation:(FGMMarkerOperationKind)kind
+                marker:(nullable FGMPlatformMarker *)marker
+            identifier:(nullable NSString *)identifier {
+  CFTimeInterval perfPassStart = FGMPerfNow();
+  switch (kind) {
+    case FGMMarkerOperationKindChange:
+      [self changeMarker:marker];
+      FGMPerfRecordPass(FGMPerfPassChange, perfPassStart);
+      break;
+    case FGMMarkerOperationKindRemove:
+      [self removeMarker:identifier];
+      FGMPerfRecordPass(FGMPerfPassRemove, perfPassStart);
+      break;
+    case FGMMarkerOperationKindAdd:
+      [self addMarker:marker];
+      FGMPerfRecordPass(FGMPerfPassAdd, perfPassStart);
+      break;
+    case FGMMarkerOperationKindNone:
+      break;
+  }
+}
+
+- (void)scheduleSlice {
+  if (FGMOptChunkPacingIsFrame()) {
+    if (self.sliceDisplayLink == nil) {
+      FGMMarkerSliceTicker *ticker = [[FGMMarkerSliceTicker alloc] init];
+      ticker.controller = self;
+      self.sliceDisplayLink = [CADisplayLink displayLinkWithTarget:ticker
+                                                          selector:@selector(frame:)];
+      [self.sliceDisplayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+    }
+    return;
+  }
+  if (self.sliceScheduled) {
+    return;
+  }
+  self.sliceScheduled = YES;
+  __weak typeof(self) weakSelf = self;
+  self.sliceScheduler(^{
+    [weakSelf runScheduledSlice];
+  });
+}
+
+- (void)runScheduledSlice {
+  self.sliceScheduled = NO;
+  // A batch that came in the meantime may have finished the work within its own call.
+  if (self.waitingOperations.count > 0) {
+    [self runSliceOfAtLeast:1 startedAt:CACurrentMediaTime()];
+  }
+}
+
+/// Carries out the waiting addition or change of one marker now, for a call that needs the
+/// marker as the Dart side knows it. Does not end the batch; the next slice does.
+- (void)applyWaitingOperationForIdentifier:(NSString *)identifier {
+  FGMPlatformMarker *marker;
+  FGMMarkerOperationKind kind = [self.waitingOperations takeOperationForIdentifier:identifier
+                                                                            marker:&marker];
+  if (kind == FGMMarkerOperationKindNone) {
+    return;
+  }
+  [self applyOperation:kind marker:marker identifier:identifier];
+  if (self.waitingOperations.count == 0) {
+    // It was the last one. The scheduled slice would find nothing to do, so the batch ends here.
+    CFTimeInterval start = CACurrentMediaTime();
+    [self endBatchInSlices];
+    FGMPerfRecordSlice(start, 1);
+    FGMPerfEndBatch(self.markerCount);
+  }
+}
+
+/// The controller of a marker the Dart side knows: on the map and not waiting to be removed.
+/// A marker whose addition is waiting is put on the map first.
+- (nullable FGMMarkerController *)controllerKnownToDartWithIdentifier:(NSString *)identifier {
+  if ([self.waitingOperations isWaitingToRemove:identifier]) {
+    return nil;
+  }
+  [self applyWaitingOperationForIdentifier:identifier];
+  return self.markerIdentifierToController[identifier];
+}
+
+#pragma mark -
+
 - (BOOL)didTapMarkerWithIdentifier:(NSString *)identifier {
   if (!identifier) {
     return NO;
+  }
+  if ([self.waitingOperations isWaitingToRemove:identifier]) {
+    // The Dart side has dropped this marker and would not know the tap. Consumed, so that the
+    // SDK does not open the info window of a pin that is about to go.
+    return YES;
   }
   FGMMarkerController *controller = self.markerIdentifierToController[identifier];
   if (!controller) {
@@ -286,7 +509,7 @@
     return;
   }
   FGMMarkerController *controller = self.markerIdentifierToController[identifier];
-  if (!controller) {
+  if (!controller || [self.waitingOperations isWaitingToRemove:identifier]) {
     return;
   }
   [self.eventDelegate
@@ -300,7 +523,7 @@
     return;
   }
   FGMMarkerController *controller = self.markerIdentifierToController[identifier];
-  if (!controller) {
+  if (!controller || [self.waitingOperations isWaitingToRemove:identifier]) {
     return;
   }
   [self.eventDelegate didDragMarkerWithIdentifier:identifier
@@ -310,7 +533,7 @@
 - (void)didEndDraggingMarkerWithIdentifier:(NSString *)identifier
                                   location:(CLLocationCoordinate2D)location {
   FGMMarkerController *controller = self.markerIdentifierToController[identifier];
-  if (!controller) {
+  if (!controller || [self.waitingOperations isWaitingToRemove:identifier]) {
     return;
   }
   [self.eventDelegate didEndDragForMarkerWithIdentifier:identifier
@@ -318,7 +541,8 @@
 }
 
 - (void)didTapInfoWindowOfMarkerWithIdentifier:(NSString *)identifier {
-  if (identifier && self.markerIdentifierToController[identifier]) {
+  if (identifier && self.markerIdentifierToController[identifier] &&
+      ![self.waitingOperations isWaitingToRemove:identifier]) {
     [self.eventDelegate didTapInfoWindowOfMarkerWithIdentifier:identifier];
   }
 }
@@ -326,7 +550,7 @@
 - (void)showMarkerInfoWindowWithIdentifier:(NSString *)identifier
                                      error:
                                          (FlutterError *_Nullable __autoreleasing *_Nonnull)error {
-  FGMMarkerController *controller = self.markerIdentifierToController[identifier];
+  FGMMarkerController *controller = [self controllerKnownToDartWithIdentifier:identifier];
   if (controller) {
     [controller showInfoWindow];
   } else {
@@ -339,7 +563,7 @@
 - (void)hideMarkerInfoWindowWithIdentifier:(NSString *)identifier
                                      error:
                                          (FlutterError *_Nullable __autoreleasing *_Nonnull)error {
-  FGMMarkerController *controller = self.markerIdentifierToController[identifier];
+  FGMMarkerController *controller = [self controllerKnownToDartWithIdentifier:identifier];
   if (controller) {
     [controller hideInfoWindow];
   } else {
@@ -353,7 +577,7 @@
     isInfoWindowShownForMarkerWithIdentifier:(NSString *)identifier
                                        error:(FlutterError *_Nullable __autoreleasing *_Nonnull)
                                                  error {
-  FGMMarkerController *controller = self.markerIdentifierToController[identifier];
+  FGMMarkerController *controller = [self controllerKnownToDartWithIdentifier:identifier];
   if (controller) {
     return @([controller isInfoWindowShown]);
   } else {
@@ -372,6 +596,19 @@
   // should be done under the context of the following issue:
   // https://github.com/flutter/flutter/issues/125496.
   return self.mapView.traitCollection.displayScale;
+}
+
+@end
+
+@implementation FGMMarkerSliceTicker
+
+- (void)frame:(CADisplayLink *)link {
+  FGMMarkersController *controller = self.controller;
+  if (controller == nil) {
+    [link invalidate];
+    return;
+  }
+  [controller runScheduledSlice];
 }
 
 @end

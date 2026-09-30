@@ -8,6 +8,7 @@
 #import "FGMAssetProvider.h"
 #import "FGMCATransactionWrapper.h"
 #import "FGMGoogleMapController.h"
+#import "FGMMarkerController.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -21,6 +22,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 /// The transaction wrapper to use for camera animations.
 @property(nonatomic, strong) id<FGMCATransactionProtocol> transactionWrapper;
+
+/// RedMap fork. Whether a marker batch is applied in slices (FGM_OPT_CHUNKED_BATCH, which this
+/// starts from) or in one piece as upstream does. A property so that a test can have both.
+@property(nonatomic, assign) BOOL appliesMarkerBatchesInSlices;
 
 @end
 
@@ -56,6 +61,9 @@ NS_ASSUME_NONNULL_BEGIN
 
 // The main Pigeon API implementation.
 @property(nonatomic, strong, readonly) FGMMapCallHandler *callHandler;
+
+// The controller of the map's markers.
+@property(nonatomic, strong, readonly) FGMMarkersController *markersController;
 
 @end
 

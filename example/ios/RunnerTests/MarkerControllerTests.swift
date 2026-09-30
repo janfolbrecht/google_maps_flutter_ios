@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import Flutter
 import GoogleMaps
 import Testing
 
@@ -15,6 +16,14 @@ import Testing
     mapViewOptions.frame = CGRect(x: 0, y: 0, width: 100, height: 100)
     mapViewOptions.camera = GMSCameraPosition(latitude: 0, longitude: 0, zoom: 0)
     return PartiallyMockedMapView(options: mapViewOptions)
+  }
+
+  /// Returns a real map view, on which a marker's map can be set and read back.
+  static func realMapView() -> GMSMapView {
+    let mapViewOptions = GMSMapViewOptions()
+    mapViewOptions.frame = CGRect(x: 0, y: 0, width: 100, height: 100)
+    mapViewOptions.camera = GMSCameraPosition(latitude: 0, longitude: 0, zoom: 0)
+    return GMSMapView(options: mapViewOptions)
   }
 
   /// Returns a FGMMarkersController instance instantiated with the given map view.
@@ -302,6 +311,367 @@ import Testing
     #expect(markerController != nil)
     #expect(weakAssetProvider != nil)
   }
+
+  // RedMap fork, FGM_OPT_CHUNKED_BATCH: the queue of waiting operations.
+
+  func platformMarker(_ identifier: String, alpha: Double = 1) -> FGMPlatformMarker {
+    return FGMPlatformMarker.make(
+      withAlpha: alpha,
+      anchor: FGMPlatformPoint.makeWith(x: 0.5, y: 1),
+      consumeTapEvents: true,
+      draggable: false,
+      flat: false,
+      icon: placeholderBitmap(),
+      infoWindow: FGMPlatformInfoWindow.make(
+        withTitle: "title",
+        snippet: nil,
+        anchor: FGMPlatformPoint.makeWith(x: 0, y: 0)
+      ),
+      position: FGMPlatformLatLng.make(withLatitude: 0, longitude: 0),
+      rotation: 0,
+      visible: true,
+      zIndex: 0,
+      markerId: identifier,
+      clusterManagerId: nil,
+      collisionBehavior: nil
+    )
+  }
+
+  /// Takes everything out of a queue, as "kind identifier" lines.
+  func drain(_ queue: FGMMarkerBatchQueue) -> [String] {
+    var taken: [String] = []
+    while true {
+      var marker: FGMPlatformMarker?
+      var identifier: NSString?
+      let kind = queue.takeNextOperation(with: &marker, identifier: &identifier)
+      switch kind {
+      case .change: taken.append("change \(marker!.markerId)")
+      case .remove: taken.append("remove \(identifier!)")
+      case .add: taken.append("add \(marker!.markerId)")
+      default: return taken
+      }
+    }
+  }
+
+  @Test func queueHandsOutChangesFirstThenRemovalsAndAdditionsInTurns() {
+    let queue = FGMMarkerBatchQueue()
+    let onMap: Set<String> = ["a", "b", "c", "d"]
+
+    queue.mergeBatch(
+      byAdding: [platformMarker("x"), platformMarker("y"), platformMarker("z")],
+      changing: [platformMarker("a")],
+      removing: ["b", "c"],
+      existsOnMap: { onMap.contains($0) })
+
+    #expect(queue.count == 6)
+    #expect(drain(queue) == ["change a", "remove b", "add x", "remove c", "add y", "add z"])
+    #expect(queue.count == 0)
+  }
+
+  @Test func queueDropsAnAdditionThatALaterBatchRemoves() {
+    let queue = FGMMarkerBatchQueue()
+
+    queue.mergeBatch(
+      byAdding: [platformMarker("x"), platformMarker("y")], changing: [], removing: [],
+      existsOnMap: { _ in false })
+    queue.mergeBatch(byAdding: [], changing: [], removing: ["x"], existsOnMap: { _ in false })
+
+    #expect(drain(queue) == ["add y"])
+  }
+
+  @Test func queueTurnsARemovalThatComesBackIntoAChange() {
+    let queue = FGMMarkerBatchQueue()
+
+    queue.mergeBatch(byAdding: [], changing: [], removing: ["a", "b"], existsOnMap: { _ in true })
+    #expect(queue.isWaiting(toRemove: "a"))
+    queue.mergeBatch(
+      byAdding: [platformMarker("a", alpha: 0.5)], changing: [], removing: [],
+      existsOnMap: { _ in true })
+
+    #expect(!queue.isWaiting(toRemove: "a"))
+    var marker: FGMPlatformMarker?
+    var identifier: NSString?
+    #expect(queue.takeNextOperation(with: &marker, identifier: &identifier) == .change)
+    #expect(marker?.markerId == "a")
+    #expect(marker?.alpha == 0.5)
+    #expect(drain(queue) == ["remove b"])
+  }
+
+  @Test func queueChangeOfAWaitingAdditionReplacesTheMarkerToAdd() {
+    let queue = FGMMarkerBatchQueue()
+
+    queue.mergeBatch(
+      byAdding: [platformMarker("x")], changing: [], removing: [], existsOnMap: { _ in false })
+    queue.mergeBatch(
+      byAdding: [], changing: [platformMarker("x", alpha: 0.5)], removing: [],
+      existsOnMap: { _ in false })
+
+    var marker: FGMPlatformMarker?
+    var identifier: NSString?
+    #expect(queue.takeNextOperation(with: &marker, identifier: &identifier) == .add)
+    #expect(marker?.alpha == 0.5)
+    #expect(queue.count == 0)
+  }
+
+  @Test func queueIgnoresWhatUpstreamIgnores() {
+    let queue = FGMMarkerBatchQueue()
+
+    // A change and a removal of a marker that is neither on the map nor waiting.
+    queue.mergeBatch(
+      byAdding: [], changing: [platformMarker("gone")], removing: ["gone"],
+      existsOnMap: { _ in false })
+    #expect(queue.count == 0)
+
+    // A change of a marker that is waiting to be removed: upstream removed it before.
+    queue.mergeBatch(byAdding: [], changing: [], removing: ["a"], existsOnMap: { _ in true })
+    queue.mergeBatch(
+      byAdding: [], changing: [platformMarker("a")], removing: [], existsOnMap: { _ in true })
+    #expect(drain(queue) == ["remove a"])
+  }
+
+  @Test func queueKeepsAMarkerAddedRemovedAndAddedAgainOnce() {
+    let queue = FGMMarkerBatchQueue()
+
+    queue.mergeBatch(
+      byAdding: [platformMarker("x")], changing: [], removing: [], existsOnMap: { _ in false })
+    queue.mergeBatch(byAdding: [], changing: [], removing: ["x"], existsOnMap: { _ in false })
+    queue.mergeBatch(
+      byAdding: [platformMarker("y"), platformMarker("x")], changing: [], removing: [],
+      existsOnMap: { _ in false })
+
+    #expect(drain(queue) == ["add y", "add x"])
+  }
+
+  // RedMap fork, FGM_OPT_CHUNKED_BATCH: the slices.
+
+  /// Keeps the slices a markers controller asks for, so that a test runs them one by one.
+  class SliceRecorder {
+    var slices: [() -> Void] = []
+
+    func attach(to controller: FGMMarkersController) {
+      // Every slice is one operation, and no batch is small enough to be applied whole.
+      controller.sliceBudget = 0
+      controller.unsplitOperationLimit = 0
+      controller.sliceScheduler = { [unowned self] slice in self.slices.append(slice!) }
+    }
+
+    /// Runs the waiting slice; false when there is none.
+    func runNext() -> Bool {
+      if slices.isEmpty { return false }
+      slices.removeFirst()()
+      return true
+    }
+
+    func runAll() {
+      while runNext() {}
+    }
+  }
+
+  func identifiers(of controller: FGMMarkersController) -> Set<String> {
+    return Set(controller.markerIdentifierToController.allKeys.map { $0 as! String })
+  }
+
+  func gmsMarker(_ identifier: String, of controller: FGMMarkersController) -> GMSMarker? {
+    return (controller.markerIdentifierToController[identifier] as? FGMMarkerController)?.marker
+  }
+
+  @Test func smallBatchIsAppliedWithinTheCall() {
+    let mapView = MarkerControllerTests.realMapView()
+    let controller = markersController(withMapView: mapView, eventDelegate: TestMapEventHandler())
+    var scheduled = 0
+    controller.sliceScheduler = { _ in scheduled += 1 }
+
+    controller.updateMarkersInSlices(
+      byAdding: [platformMarker("a"), platformMarker("b"), platformMarker("c")],
+      changing: [], removing: [])
+
+    #expect(identifiers(of: controller) == ["a", "b", "c"])
+    #expect(controller.waitingOperationCount() == 0)
+    #expect(scheduled == 0)
+  }
+
+  @Test func largeBatchIsAppliedSliceBySlice() {
+    let mapView = MarkerControllerTests.realMapView()
+    let controller = markersController(withMapView: mapView, eventDelegate: TestMapEventHandler())
+    let recorder = SliceRecorder()
+    recorder.attach(to: controller)
+
+    controller.updateMarkersInSlices(
+      byAdding: ["a", "b", "c", "d"].map { platformMarker($0) }, changing: [], removing: [])
+
+    // The first slice ran within the call; the next one is asked for, once.
+    #expect(identifiers(of: controller) == ["a"])
+    #expect(controller.waitingOperationCount() == 3)
+    #expect(recorder.slices.count == 1)
+
+    #expect(recorder.runNext())
+    #expect(identifiers(of: controller) == ["a", "b"])
+    #expect(recorder.slices.count == 1)
+
+    recorder.runAll()
+    #expect(identifiers(of: controller) == ["a", "b", "c", "d"])
+    #expect(controller.waitingOperationCount() == 0)
+    for identifier in ["a", "b", "c", "d"] {
+      #expect(gmsMarker(identifier, of: controller)?.map === mapView)
+    }
+  }
+
+  @Test func batchThatComesBetweenSlicesIsMergedWithTheRest() {
+    let mapView = MarkerControllerTests.realMapView()
+    let controller = markersController(withMapView: mapView, eventDelegate: TestMapEventHandler())
+    let recorder = SliceRecorder()
+    recorder.attach(to: controller)
+
+    controller.updateMarkersInSlices(
+      byAdding: ["a", "b", "c", "d"].map { platformMarker($0) }, changing: [], removing: [])
+    #expect(identifiers(of: controller) == ["a"])
+    let markerA = gmsMarker("a", of: controller)
+
+    // The Dart side now holds a, b, c, d and sends the step to c, d, e: "a" is on the map, "b"
+    // is still waiting.
+    controller.updateMarkersInSlices(
+      byAdding: [platformMarker("e")], changing: [], removing: ["a", "b"])
+    recorder.runAll()
+
+    #expect(identifiers(of: controller) == ["c", "d", "e"])
+    #expect(controller.waitingOperationCount() == 0)
+    #expect(markerA?.map == nil)
+    // One slice was asked for at a time, however many batches came.
+    #expect(recorder.slices.isEmpty)
+  }
+
+  @Test func markerThatGoesAndComesBackBetweenSlicesStaysTheSameMarker() {
+    let mapView = MarkerControllerTests.realMapView()
+    let controller = markersController(withMapView: mapView, eventDelegate: TestMapEventHandler())
+    controller.updateMarkersInSlices(
+      byAdding: ["a", "b", "c"].map { platformMarker($0) }, changing: [], removing: [])
+    let markerC = gmsMarker("c", of: controller)
+    let recorder = SliceRecorder()
+    recorder.attach(to: controller)
+
+    controller.updateMarkersInSlices(byAdding: [], changing: [], removing: ["a", "b", "c"])
+    #expect(identifiers(of: controller) == ["b", "c"])
+    controller.updateMarkersInSlices(
+      byAdding: [platformMarker("c", alpha: 0.5)], changing: [], removing: [])
+    recorder.runAll()
+
+    #expect(identifiers(of: controller) == ["c"])
+    #expect(gmsMarker("c", of: controller) === markerC)
+    #expect(markerC?.map === mapView)
+    #expect(markerC?.opacity == 0.5)
+  }
+
+  /// Counts the taps that reach the Dart side.
+  class TapCountingEventHandler: TestMapEventHandler {
+    var tapped: [String] = []
+    override func didTapMarker(withIdentifier markerId: String) {
+      tapped.append(markerId)
+    }
+  }
+
+  @Test func tapOnAMarkerWaitingToBeRemovedIsNotSent() {
+    let mapView = MarkerControllerTests.realMapView()
+    let eventHandler = TapCountingEventHandler()
+    let controller = markersController(withMapView: mapView, eventDelegate: eventHandler)
+    controller.updateMarkersInSlices(
+      byAdding: ["a", "b", "c"].map { platformMarker($0) }, changing: [], removing: [])
+    let recorder = SliceRecorder()
+    recorder.attach(to: controller)
+
+    controller.updateMarkersInSlices(byAdding: [], changing: [], removing: ["a", "b"])
+    // "a" went with the first slice, "b" is on the map until the next one.
+    #expect(identifiers(of: controller) == ["b", "c"])
+
+    #expect(controller.didTapMarker(withIdentifier: "b"))
+    #expect(eventHandler.tapped.isEmpty)
+    #expect(controller.didTapMarker(withIdentifier: "c"))
+    #expect(eventHandler.tapped == ["c"])
+
+    var error: FlutterError?
+    controller.showMarkerInfoWindow(withIdentifier: "b", error: &error)
+    #expect(error?.code == "Invalid markerId")
+  }
+
+  @Test func infoWindowOfAWaitingMarkerPutsItOnTheMapFirst() {
+    let mapView = MarkerControllerTests.realMapView()
+    let controller = markersController(withMapView: mapView, eventDelegate: TestMapEventHandler())
+    let recorder = SliceRecorder()
+    recorder.attach(to: controller)
+
+    controller.updateMarkersInSlices(
+      byAdding: ["a", "b", "c"].map { platformMarker($0) }, changing: [], removing: [])
+    #expect(identifiers(of: controller) == ["a"])
+
+    var error: FlutterError?
+    controller.showMarkerInfoWindow(withIdentifier: "c", error: &error)
+
+    #expect(error == nil)
+    #expect(identifiers(of: controller) == ["a", "c"])
+    #expect(mapView.selectedMarker === gmsMarker("c", of: controller))
+
+    recorder.runAll()
+    #expect(identifiers(of: controller) == ["a", "b", "c"])
+    #expect(controller.waitingOperationCount() == 0)
+  }
+
+  /// Counts how often clustering is invoked.
+  class CountingClusterManagersController: FGMClusterManagersController {
+    var invocations = 0
+    override func invokeClusteringForEachClusterManager() {
+      invocations += 1
+      super.invokeClusteringForEachClusterManager()
+    }
+  }
+
+  @Test func clusteringIsInvokedOnceAfterTheLastSlice() {
+    let mapView = MarkerControllerTests.realMapView()
+    let eventHandler = TestMapEventHandler()
+    let clusterManagers = CountingClusterManagersController(
+      mapView: mapView, eventDelegate: eventHandler)
+    let controller = FGMMarkersController(
+      mapView: mapView,
+      eventDelegate: eventHandler,
+      clusterManagersController: clusterManagers,
+      assetProvider: TestAssetProvider(),
+      markerType: .marker
+    )
+
+    // A batch applied within the call, and an empty one: once each, as upstream.
+    controller.updateMarkersInSlices(byAdding: [platformMarker("a")], changing: [], removing: [])
+    #expect(clusterManagers.invocations == 1)
+    controller.updateMarkersInSlices(byAdding: [], changing: [], removing: [])
+    #expect(clusterManagers.invocations == 2)
+
+    let recorder = SliceRecorder()
+    recorder.attach(to: controller)
+    controller.updateMarkersInSlices(
+      byAdding: ["b", "c", "d"].map { platformMarker($0) }, changing: [], removing: [])
+    #expect(recorder.runNext())
+    // An empty batch between two slices does not end the batch in progress.
+    controller.updateMarkersInSlices(byAdding: [], changing: [], removing: [])
+    #expect(clusterManagers.invocations == 2)
+
+    recorder.runAll()
+    #expect(identifiers(of: controller) == ["a", "b", "c", "d"])
+    #expect(clusterManagers.invocations == 3)
+  }
+
+  @Test func sliceScheduledForAControllerThatIsGoneDoesNothing() {
+    let mapView = MarkerControllerTests.realMapView()
+    let recorder = SliceRecorder()
+    do {
+      let controller = markersController(
+        withMapView: mapView, eventDelegate: TestMapEventHandler())
+      recorder.attach(to: controller)
+      controller.updateMarkersInSlices(
+        byAdding: ["a", "b"].map { platformMarker($0) }, changing: [], removing: [])
+      #expect(recorder.slices.count == 1)
+    }
+
+    // The map went away with slices still waiting; the block holds the controller weakly.
+    recorder.runAll()
+  }
+
 }
 
 /// A GMSAdvancedMarker that ensures that property updates are made before the map is set.

@@ -325,6 +325,59 @@ class AccessibilityRecordingMapView: GMSMapView {
     #expect(mapView.accessibilityElementsHidden)
   }
 
+  // RedMap fork, FGM_OPT_CHUNKED_BATCH, through the Pigeon call.
+
+  @Test func markerBatchInSlicesHidesAccessibilityElementsUntilTheLastSlice() {
+    let (controller, mapView) = accessibilityRecordingController()
+    #expect(controller.callHandler.appliesMarkerBatchesInSlices)
+    var slices: [() -> Void] = []
+    controller.markersController.sliceBudget = 0
+    controller.markersController.unsplitOperationLimit = 0
+    controller.markersController.sliceScheduler = { slices.append($0!) }
+
+    var error: FlutterError? = nil
+    controller.callHandler.updateMarkers(
+      byAdding: [marker("a"), marker("b"), marker("c")], changing: [], removing: [], error: &error)
+
+    #expect(error == nil)
+    #expect(controller.markersController.markerCount() == 1)
+    #expect(mapView.hiddenValues == [true])
+
+    while !slices.isEmpty {
+      slices.removeFirst()()
+    }
+
+    #expect(controller.markersController.markerCount() == 3)
+    #expect(mapView.hiddenValues == [true, false])
+    #expect(!mapView.accessibilityElementsHidden)
+  }
+
+  @Test func markerBatchIsAppliedInOnePieceWhenSlicesAreSwitchedOff() {
+    let (controller, mapView) = accessibilityRecordingController()
+    var scheduled = 0
+    controller.markersController.sliceBudget = 0
+    controller.markersController.unsplitOperationLimit = 0
+    controller.markersController.sliceScheduler = { _ in scheduled += 1 }
+    // What FGM_OPT_CHUNKED_BATCH=0 does to every map of the process.
+    controller.callHandler.appliesMarkerBatchesInSlices = false
+
+    var error: FlutterError? = nil
+    controller.callHandler.updateMarkers(
+      byAdding: [marker("a"), marker("b"), marker("c")], changing: [], removing: [], error: &error)
+
+    #expect(error == nil)
+    #expect(controller.markersController.markerCount() == 3)
+    #expect(controller.markersController.waitingOperationCount() == 0)
+    #expect(scheduled == 0)
+    #expect(mapView.hiddenValues == [true, false])
+
+    controller.callHandler.updateMarkers(
+      byAdding: [], changing: [marker("a")], removing: ["b", "c"], error: &error)
+
+    #expect(controller.markersController.markerCount() == 1)
+    #expect(scheduled == 0)
+  }
+
   // RedMap fork: accessibility elements hidden through the map configuration.
 
   private func accessibilityRecordingController(
