@@ -46,7 +46,7 @@
                existsOnMap:(BOOL (NS_NOESCAPE ^)(NSString *identifier))existsOnMap {
   for (FGMPlatformMarker *marker in toAdd) {
     NSString *identifier = marker.markerId;
-    if ([_removals containsObject:identifier]) {
+    if (_removals.count > 0 && [_removals containsObject:identifier]) {
       // Going and coming back: the marker stays and takes the properties it comes back with.
       [_removals removeObject:identifier];
       [self setChange:marker];
@@ -70,12 +70,18 @@
     }
   }
   for (NSString *identifier in idsToRemove) {
-    if (_additions[identifier] != nil) {
+    if (_additions.count > 0 && _additions[identifier] != nil) {
       [_additions removeObjectForKey:identifier];
-    } else if (![_removals containsObject:identifier] && existsOnMap(identifier)) {
-      [_changes removeObjectForKey:identifier];
+    } else if (existsOnMap(identifier)) {
+      if (_changes.count > 0) {
+        [_changes removeObjectForKey:identifier];
+      }
+      // Into the order only if it was not waiting already.
+      NSUInteger waiting = _removals.count;
       [_removals addObject:identifier];
-      [_removalOrder addObject:identifier];
+      if (_removals.count > waiting) {
+        [_removalOrder addObject:identifier];
+      }
     }
   }
   [self resetIfEmpty];
@@ -130,26 +136,39 @@ static double FGMSquaredDistance(CLLocationCoordinate2D centre, CLLocationCoordi
                                                 from:(NSUInteger)cursor
                                              waiting:(id)waiting
                                          sortedByKey:(double (NS_NOESCAPE ^)(NSString *identifier))key {
-  NSMutableArray<NSString *> *identifiers = [[NSMutableArray alloc] init];
-  NSMutableSet<NSString *> *seen = [[NSMutableSet alloc] init];
-  for (NSUInteger i = cursor; i < order.count; i++) {
-    NSString *identifier = order[i];
-    if ([self isIdentifier:identifier waitingIn:waiting] && ![seen containsObject:identifier]) {
-      [seen addObject:identifier];
-      [identifiers addObject:identifier];
+  NSArray<NSString *> *identifiers;
+  NSUInteger waitingCount = [waiting count];
+  if (order.count - cursor == waitingCount) {
+    // Every identifier that waits is in the order from the cursor on at least once, so as many
+    // entries as identifiers waiting means each of them once and nothing else. This is the batch
+    // no later batch has touched, and it saves a lookup and a set entry per marker.
+    identifiers = cursor == 0 ? order
+                              : [order subarrayWithRange:NSMakeRange(cursor, waitingCount)];
+  } else {
+    NSMutableArray<NSString *> *live = [[NSMutableArray alloc] initWithCapacity:waitingCount];
+    NSMutableSet<NSString *> *seen = [[NSMutableSet alloc] initWithCapacity:waitingCount];
+    for (NSUInteger i = cursor; i < order.count; i++) {
+      NSString *identifier = order[i];
+      if ([self isIdentifier:identifier waitingIn:waiting] && ![seen containsObject:identifier]) {
+        [seen addObject:identifier];
+        [live addObject:identifier];
+      }
     }
+    identifiers = live;
   }
   NSUInteger count = identifiers.count;
   if (count < 2) {
-    return identifiers;
+    return [identifiers mutableCopy];
   }
   // Sorted through plain arrays: a comparator that looks two keys up in a dictionary for each
   // of the ~16 000 comparisons of 1500 markers costs half a slice.
   double *keys = malloc(count * sizeof(double));
   NSUInteger *indices = malloc(count * sizeof(NSUInteger));
-  for (NSUInteger i = 0; i < count; i++) {
-    keys[i] = key(identifiers[i]);
-    indices[i] = i;
+  NSUInteger next = 0;
+  for (NSString *identifier in identifiers) {
+    keys[next] = key(identifier);
+    indices[next] = next;
+    next += 1;
   }
   qsort_b(indices, count, sizeof(NSUInteger), ^int(const void *left, const void *right) {
     NSUInteger a = *(const NSUInteger *)left;

@@ -224,7 +224,9 @@ static const NSUInteger kFGMUnsplitOperationLimit = 50;
     _sliceBudget = FGMOptChunkBudget();
     _unsplitOperationLimit = kFGMUnsplitOperationLimit;
     _ordersNearestFirst = FGMOptNearestFirstEnabled();
-    _recyclesMarkers = FGMOptRecycleMarkersEnabled();
+    // Without FGM_OPT_SKIP_UNCHANGED a recycled marker has every property set again while it is
+    // on the map, which costs more than taking it off and putting a new one on.
+    _recyclesMarkers = FGMOptRecycleMarkersEnabled() && FGMOptSkipUnchangedEnabled();
     if (!FGMOptChunkPacingIsFrame()) {
       _sliceScheduler = ^(dispatch_block_t slice) {
         dispatch_async(dispatch_get_main_queue(), slice);

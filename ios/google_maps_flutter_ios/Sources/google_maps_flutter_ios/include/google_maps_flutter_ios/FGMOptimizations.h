@@ -40,7 +40,8 @@ BOOL FGMOptNearestFirstEnabled(void);
 /// are one operation: the `GMSMarker` of the first stays on the map and takes the identifier and
 /// the properties of the second. Detaching a marker, making one and attaching it cost several
 /// times what moving one costs, most of it in the SDK's own usage log, which writes to the user
-/// defaults on every attach and detach.
+/// defaults on every attach and detach. Needs `FGM_OPT_SKIP_UNCHANGED`: with every property of a
+/// marker on the map set again, a recycled marker costs more than a removed and an added one.
 BOOL FGMOptRecycleMarkersEnabled(void);
 
 /// `FGM_OPT_SKIP_UNCHANGED`: when a marker is updated, a property that already holds the value
