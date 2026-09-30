@@ -89,6 +89,90 @@
   _changes[identifier] = marker;
 }
 
+/// The square of the distance between two positions in degrees, the longitude shortened to the
+/// latitude of `centre` and taken the short way round the globe. Only for comparing.
+static double FGMSquaredDistance(CLLocationCoordinate2D centre, CLLocationCoordinate2D position) {
+  double latitude = position.latitude - centre.latitude;
+  double longitude = fabs(position.longitude - centre.longitude);
+  if (longitude > 180.0) {
+    longitude = 360.0 - longitude;
+  }
+  longitude *= cos(centre.latitude * M_PI / 180.0);
+  return latitude * latitude + longitude * longitude;
+}
+
+- (void)orderNearestFirstTo:(CLLocationCoordinate2D)centre
+              positionOnMap:
+                  (CLLocationCoordinate2D (NS_NOESCAPE ^)(NSString *identifier))positionOnMap {
+  NSDictionary<NSString *, FGMPlatformMarker *> *additions = _additions;
+  _additionOrder = [self identifiersWaitingIn:_additionOrder
+                                         from:_additionCursor
+                                      waiting:_additions
+                                   sortedByKey:^double(NSString *identifier) {
+                                     FGMPlatformLatLng *position = additions[identifier].position;
+                                     return FGMSquaredDistance(
+                                         centre, CLLocationCoordinate2DMake(position.latitude,
+                                                                            position.longitude));
+                                   }];
+  _additionCursor = 0;
+  _removalOrder = [self identifiersWaitingIn:_removalOrder
+                                        from:_removalCursor
+                                     waiting:_removals
+                                  sortedByKey:^double(NSString *identifier) {
+                                    return FGMSquaredDistance(centre, positionOnMap(identifier));
+                                  }];
+  _removalCursor = 0;
+}
+
+/// The identifiers of `order` from `cursor` on that are still waiting, each once, sorted by
+/// `key` ascending; equal keys keep their order.
+- (NSMutableArray<NSString *> *)identifiersWaitingIn:(NSArray<NSString *> *)order
+                                                from:(NSUInteger)cursor
+                                             waiting:(id)waiting
+                                         sortedByKey:(double (NS_NOESCAPE ^)(NSString *identifier))key {
+  NSMutableArray<NSString *> *identifiers = [[NSMutableArray alloc] init];
+  NSMutableSet<NSString *> *seen = [[NSMutableSet alloc] init];
+  for (NSUInteger i = cursor; i < order.count; i++) {
+    NSString *identifier = order[i];
+    if ([self isIdentifier:identifier waitingIn:waiting] && ![seen containsObject:identifier]) {
+      [seen addObject:identifier];
+      [identifiers addObject:identifier];
+    }
+  }
+  NSUInteger count = identifiers.count;
+  if (count < 2) {
+    return identifiers;
+  }
+  // Sorted through plain arrays: a comparator that looks two keys up in a dictionary for each
+  // of the ~16 000 comparisons of 1500 markers costs half a slice.
+  double *keys = malloc(count * sizeof(double));
+  NSUInteger *indices = malloc(count * sizeof(NSUInteger));
+  for (NSUInteger i = 0; i < count; i++) {
+    keys[i] = key(identifiers[i]);
+    indices[i] = i;
+  }
+  qsort_b(indices, count, sizeof(NSUInteger), ^int(const void *left, const void *right) {
+    NSUInteger a = *(const NSUInteger *)left;
+    NSUInteger b = *(const NSUInteger *)right;
+    if (keys[a] != keys[b]) {
+      return keys[a] < keys[b] ? -1 : 1;
+    }
+    return a < b ? -1 : (a > b ? 1 : 0);
+  });
+  NSMutableArray<NSString *> *sorted = [[NSMutableArray alloc] initWithCapacity:count];
+  for (NSUInteger i = 0; i < count; i++) {
+    [sorted addObject:identifiers[indices[i]]];
+  }
+  free(keys);
+  free(indices);
+  return sorted;
+}
+
+- (BOOL)isIdentifier:(NSString *)identifier waitingIn:(id)waiting {
+  return [waiting isKindOfClass:[NSSet class]] ? [(NSSet *)waiting containsObject:identifier]
+                                               : ((NSDictionary *)waiting)[identifier] != nil;
+}
+
 - (FGMMarkerOperationKind)takeNextOperationWithMarker:
                               (FGMPlatformMarker *_Nullable __autoreleasing *_Nonnull)marker
                                            identifier:(NSString *_Nullable __autoreleasing *_Nonnull)
@@ -153,10 +237,7 @@
   while (YES) {
     NSString *identifier = order[*cursor];
     *cursor += 1;
-    BOOL isWaiting = [waiting isKindOfClass:[NSSet class]]
-                         ? [(NSSet *)waiting containsObject:identifier]
-                         : ((NSDictionary *)waiting)[identifier] != nil;
-    if (isWaiting) {
+    if ([self isIdentifier:identifier waitingIn:waiting]) {
       return identifier;
     }
   }

@@ -79,9 +79,10 @@ BOOL FGMPerfEnabled(void) {
     enabled = [value isEqualToString:@"1"];
     if (enabled) {
       NSLog(@"[FGMPerf] enabled=1 clock=CACurrentMediaTime units=ms opt_ax_batch=%d "
-            @"opt_icon_cache=%d opt_chunked_batch=%d chunk_budget_ms=%.1f chunk_pacing=%@",
+            @"opt_icon_cache=%d opt_chunked_batch=%d opt_nearest_first=%d chunk_budget_ms=%.1f "
+            @"chunk_pacing=%@",
             FGMOptAccessibilityBatchEnabled(), FGMOptIconCacheEnabled(),
-            FGMOptChunkedBatchEnabled(), FGMOptChunkBudget() * 1000.0,
+            FGMOptChunkedBatchEnabled(), FGMOptNearestFirstEnabled(), FGMOptChunkBudget() * 1000.0,
             FGMOptChunkPacingIsFrame() ? @"frame" : @"queue");
       [FGMPerfFrameMonitor start];
     }

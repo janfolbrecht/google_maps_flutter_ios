@@ -38,6 +38,15 @@ BOOL FGMOptChunkedBatchEnabled(void) {
   return enabled;
 }
 
+BOOL FGMOptNearestFirstEnabled(void) {
+  static BOOL enabled;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    enabled = FGMOptIsOn(@"FGM_OPT_NEAREST_FIRST");
+  });
+  return enabled;
+}
+
 CFTimeInterval FGMOptChunkBudget(void) {
   static CFTimeInterval budget;
   static dispatch_once_t onceToken;

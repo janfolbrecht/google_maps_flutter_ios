@@ -10,6 +10,7 @@
 // the order they came. The queue keeps that promise while a later batch overtakes an earlier one:
 // an operation that a later batch undoes is dropped instead of being carried out and reverted.
 
+@import CoreLocation;
 @import Foundation;
 
 #import "google_maps_flutter_pigeon_messages.g.h"
@@ -46,6 +47,13 @@ typedef NS_ENUM(NSUInteger, FGMMarkerOperationKind) {
                   changing:(NSArray<FGMPlatformMarker *> *)toChange
                   removing:(NSArray<NSString *> *)idsToRemove
                existsOnMap:(BOOL (NS_NOESCAPE ^)(NSString *identifier))existsOnMap;
+
+/// FGM_OPT_NEAREST_FIRST. Puts the waiting removals and the waiting additions into the order of
+/// their distance from `centre`, nearest first; operations equally far keep the order they had.
+/// `positionOnMap` gives the position of a marker that is on the map, for the removals.
+/// The order holds until the next batch is merged, which appends what it brings.
+- (void)orderNearestFirstTo:(CLLocationCoordinate2D)centre
+              positionOnMap:(CLLocationCoordinate2D (NS_NOESCAPE ^)(NSString *identifier))positionOnMap;
 
 /// Hands out the next operation and forgets it.
 ///

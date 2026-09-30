@@ -25,6 +25,11 @@ BOOL FGMOptIconCacheEnabled(void);
 /// instead of in one piece on the main thread.
 BOOL FGMOptChunkedBatchEnabled(void);
 
+/// `FGM_OPT_NEAREST_FIRST`: within a chunked batch, carry out the removals and the additions in
+/// the order of their distance from the centre of the map, nearest first, so that what the user
+/// looks at is finished first. Off, they keep the order the Dart side sent them in.
+BOOL FGMOptNearestFirstEnabled(void);
+
 /// `FGM_OPT_CHUNK_BUDGET_MS`: the time one slice of a chunked batch may take, in seconds. 8 ms
 /// unless the variable holds another positive number of milliseconds. A knob for measuring.
 CFTimeInterval FGMOptChunkBudget(void);

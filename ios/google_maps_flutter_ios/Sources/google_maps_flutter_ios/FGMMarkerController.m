@@ -158,6 +158,7 @@
 @property(assign, nonatomic, readwrite) CFTimeInterval sliceBudget;
 @property(assign, nonatomic, readwrite) NSUInteger unsplitOperationLimit;
 @property(copy, nonatomic, readwrite) void (^sliceScheduler)(dispatch_block_t slice);
+@property(assign, nonatomic, readwrite) BOOL ordersNearestFirst;
 
 /// Runs the slice that `scheduleSlice` asked for.
 - (void)runScheduledSlice;
@@ -192,6 +193,7 @@ static const NSUInteger kFGMUnsplitOperationLimit = 50;
     _waitingOperations = [[FGMMarkerBatchQueue alloc] init];
     _sliceBudget = FGMOptChunkBudget();
     _unsplitOperationLimit = kFGMUnsplitOperationLimit;
+    _ordersNearestFirst = FGMOptNearestFirstEnabled();
     _sliceScheduler = ^(dispatch_block_t slice) {
       dispatch_async(dispatch_get_main_queue(), slice);
     };
@@ -334,6 +336,16 @@ static const NSUInteger kFGMUnsplitOperationLimit = 50;
                                    return self.markerIdentifierToController[identifier] != nil;
                                  }];
   NSUInteger waiting = self.waitingOperations.count;
+  if (self.ordersNearestFirst && waiting > self.unsplitOperationLimit) {
+    // FGM_OPT_NEAREST_FIRST. Everything that waits is ordered again, around where the camera
+    // is now: what is left of an earlier batch was ordered around where it was then.
+    [self.waitingOperations
+        orderNearestFirstTo:self.mapView.camera.target
+              positionOnMap:^CLLocationCoordinate2D(NSString *identifier) {
+                FGMMarkerController *controller = self.markerIdentifierToController[identifier];
+                return controller.marker.position;
+              }];
+  }
   if (wasIdle) {
     [self beginBatchInSlices:waiting > 0];
   }

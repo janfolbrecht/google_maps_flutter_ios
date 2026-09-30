@@ -36,6 +36,10 @@
 /// A batch of up to this many operations that finds nothing waiting is applied whole.
 @property(assign, nonatomic) NSUInteger unsplitOperationLimit;
 
+/// Whether the removals and the additions of a batch that is split are carried out nearest to
+/// the centre of the map first (FGM_OPT_NEAREST_FIRST, which this starts from).
+@property(assign, nonatomic) BOOL ordersNearestFirst;
+
 /// Gets the block that runs the next slice and has to run it later. The main queue by default;
 /// a test keeps the block and runs it when it wants the next slice.
 @property(copy, nonatomic) void (^sliceScheduler)(dispatch_block_t slice);

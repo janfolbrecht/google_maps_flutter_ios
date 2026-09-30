@@ -314,7 +314,9 @@ import Testing
 
   // RedMap fork, FGM_OPT_CHUNKED_BATCH: the queue of waiting operations.
 
-  func platformMarker(_ identifier: String, alpha: Double = 1) -> FGMPlatformMarker {
+  func platformMarker(
+    _ identifier: String, alpha: Double = 1, latitude: Double = 0, longitude: Double = 0
+  ) -> FGMPlatformMarker {
     return FGMPlatformMarker.make(
       withAlpha: alpha,
       anchor: FGMPlatformPoint.makeWith(x: 0.5, y: 1),
@@ -327,7 +329,7 @@ import Testing
         snippet: nil,
         anchor: FGMPlatformPoint.makeWith(x: 0, y: 0)
       ),
-      position: FGMPlatformLatLng.make(withLatitude: 0, longitude: 0),
+      position: FGMPlatformLatLng.make(withLatitude: latitude, longitude: longitude),
       rotation: 0,
       visible: true,
       zIndex: 0,
@@ -440,6 +442,99 @@ import Testing
       existsOnMap: { _ in false })
 
     #expect(drain(queue) == ["add y", "add x"])
+  }
+
+  // RedMap fork, FGM_OPT_NEAREST_FIRST.
+
+  @Test func queueOrdersRemovalsAndAdditionsNearestFirst() {
+    let queue = FGMMarkerBatchQueue()
+    let onMap: [String: Double] = ["far": 5, "near": 4]
+
+    queue.mergeBatch(
+      byAdding: [
+        platformMarker("x3", latitude: 3), platformMarker("x1", latitude: 1),
+        platformMarker("x2", latitude: 2),
+      ],
+      changing: [], removing: ["far", "near"],
+      existsOnMap: { onMap[$0] != nil })
+    queue.orderNearestFirst(
+      to: CLLocationCoordinate2D(latitude: 0, longitude: 0),
+      positionOnMap: { CLLocationCoordinate2D(latitude: onMap[$0]!, longitude: 0) })
+
+    #expect(drain(queue) == ["remove near", "add x1", "remove far", "add x2", "add x3"])
+  }
+
+  @Test func queueMeasuresLongitudeTheShortWayRound() {
+    let queue = FGMMarkerBatchQueue()
+
+    queue.mergeBatch(
+      byAdding: [
+        platformMarker("nine degrees west", longitude: 170),
+        platformMarker("two degrees east", longitude: -179),
+      ],
+      changing: [], removing: [], existsOnMap: { _ in false })
+    queue.orderNearestFirst(
+      to: CLLocationCoordinate2D(latitude: 0, longitude: 179),
+      positionOnMap: { _ in CLLocationCoordinate2D() })
+
+    #expect(drain(queue) == ["add two degrees east", "add nine degrees west"])
+  }
+
+  @Test func queueOrdersWhatIsLeftAgainAfterTheCameraMoved() {
+    let queue = FGMMarkerBatchQueue()
+
+    queue.mergeBatch(
+      byAdding: [
+        platformMarker("x1", latitude: 1), platformMarker("x2", latitude: 2),
+        platformMarker("x3", latitude: 3),
+      ],
+      changing: [], removing: [], existsOnMap: { _ in false })
+    queue.orderNearestFirst(
+      to: CLLocationCoordinate2D(latitude: 0, longitude: 0),
+      positionOnMap: { _ in CLLocationCoordinate2D() })
+    var marker: FGMPlatformMarker?
+    var identifier: NSString?
+    #expect(queue.takeNextOperation(with: &marker, identifier: &identifier) == .add)
+    #expect(marker?.markerId == "x1")
+
+    // A batch that drops x2 and brings x9, with the camera now in the north.
+    queue.mergeBatch(
+      byAdding: [platformMarker("x9", latitude: 9)], changing: [], removing: ["x2"],
+      existsOnMap: { $0 == "x1" })
+    queue.orderNearestFirst(
+      to: CLLocationCoordinate2D(latitude: 10, longitude: 0),
+      positionOnMap: { _ in CLLocationCoordinate2D() })
+
+    #expect(drain(queue) == ["add x9", "add x3"])
+  }
+
+  @Test func splitBatchStartsWithTheMarkerNearestToTheCentreOfTheMap() {
+    let mapView = MarkerControllerTests.realMapView()
+    let controller = markersController(withMapView: mapView, eventDelegate: TestMapEventHandler())
+    let recorder = SliceRecorder()
+    recorder.attach(to: controller)
+    let batch = [
+      platformMarker("far", latitude: 30), platformMarker("near", latitude: 10),
+      platformMarker("middle", latitude: 20),
+    ]
+
+    #expect(controller.ordersNearestFirst)
+    controller.updateMarkersInSlices(byAdding: batch, changing: [], removing: [])
+    #expect(identifiers(of: controller) == ["near"])
+    #expect(recorder.runNext())
+    #expect(identifiers(of: controller) == ["near", "middle"])
+    recorder.runAll()
+    #expect(identifiers(of: controller) == ["near", "middle", "far"])
+
+    // Switched off, the order is the one the batch came in.
+    controller.updateMarkersInSlices(
+      byAdding: [], changing: [], removing: ["far", "near", "middle"])
+    recorder.runAll()
+    controller.ordersNearestFirst = false
+    controller.updateMarkersInSlices(byAdding: batch, changing: [], removing: [])
+    #expect(identifiers(of: controller) == ["far"])
+    recorder.runAll()
+    #expect(identifiers(of: controller) == ["near", "middle", "far"])
   }
 
   // RedMap fork, FGM_OPT_CHUNKED_BATCH: the slices.
