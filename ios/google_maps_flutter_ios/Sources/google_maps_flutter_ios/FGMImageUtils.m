@@ -16,6 +16,42 @@
 /// RedMap fork, FGM_OPT_ICON_CACHE: the number of images one asset provider's cache keeps.
 static const NSUInteger kFGMIconCacheCountLimit = 256;
 
+/// RedMap fork, FGM_OPT_ICON_DESCRIPTION. An image that makes its description once.
+///
+/// The Maps SDK asks a marker's image for its `-description` whenever it draws a marker that is
+/// new or has changed (`StickerBehavior::SelectFrame`), and `UIImage` builds the string from the
+/// image's address, size and rendering mode on every call. None of that changes for an image in
+/// the cache, so the string `UIImage` would have returned is kept.
+@interface FGMDescribedImage : UIImage
+@end
+
+@implementation FGMDescribedImage {
+  NSString *_madeDescription;
+}
+
+- (NSString *)description {
+  NSString *description = _madeDescription;
+  if (description == nil) {
+    description = [super description];
+    _madeDescription = description;
+  }
+  return description;
+}
+
+@end
+
+/// The image as an FGMDescribedImage over the same bitmap, or the image itself if it is not a
+/// plain bitmap image (animated, or without a CGImage).
+static UIImage *FGMDescribedImageFromImage(UIImage *image) {
+  CGImageRef bitmap = image.CGImage;
+  if (bitmap == NULL || image.images != nil) {
+    return image;
+  }
+  return [[FGMDescribedImage alloc] initWithCGImage:bitmap
+                                              scale:image.scale
+                                        orientation:image.imageOrientation];
+}
+
 /// Returns the key under which the image of the bitmap is cached: everything that decides what
 /// FGMUncachedIconFromBitmap returns for it. Returns nil for a bitmap that is not cached.
 static NSString *FGMIconCacheKey(id bitmap, CGFloat screenScale);
@@ -83,6 +119,9 @@ UIImage *FGMIconFromBitmap(FGMPlatformBitmap *platformBitmap,
   if (!image) {
     image = FGMUncachedIconFromBitmap(platformBitmap, assetProvider, screenScale);
     if (image) {
+      if (FGMOptIconDescriptionEnabled()) {
+        image = FGMDescribedImageFromImage(image);
+      }
       [cache setObject:image forKey:cacheKey];
     }
   }

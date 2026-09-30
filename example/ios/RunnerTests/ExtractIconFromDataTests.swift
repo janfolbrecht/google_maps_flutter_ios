@@ -463,6 +463,26 @@ import Testing
     #expect(first === second)
   }
 
+  // RedMap fork, FGM_OPT_ICON_DESCRIPTION.
+
+  @Test func cachedIconMakesItsDescriptionOnce() throws {
+    let assetProvider = TestAssetProvider(
+      image: createImage(side: 48, color: .red), forAssetName: "pin", package: nil)
+    let bitmap = FGMPlatformBitmap.make(withBitmap: assetBitmap("pin", width: 16, height: 16))
+    let plain = try #require(createImage(side: 48, color: .red).cgImage)
+    let icon = try #require(FGMIconFromBitmap(bitmap, assetProvider, 3.0))
+
+    // The same string object on every call, where a plain UIImage formats a new one.
+    let first = icon.value(forKey: "description") as AnyObject
+    let second = icon.value(forKey: "description") as AnyObject
+    #expect(first === second)
+    #expect((first as? String)?.isEmpty == false)
+
+    // Still the image the asset stands for.
+    #expect(icon.size == CGSize(width: 16, height: 16))
+    #expect(try pixel(of: icon) == pixel(of: UIImage(cgImage: plain)))
+  }
+
   @Test func iconCacheKeepsDifferentDescriptorsApart() throws {
     let assetName = "fakeImageName"
     let assetProvider = TestAssetProvider(

@@ -29,6 +29,15 @@ BOOL FGMOptIconCacheEnabled(void) {
   return enabled;
 }
 
+BOOL FGMOptIconDescriptionEnabled(void) {
+  static BOOL enabled;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    enabled = FGMOptIsOn(@"FGM_OPT_ICON_DESCRIPTION");
+  });
+  return enabled;
+}
+
 BOOL FGMOptChunkedBatchEnabled(void) {
   static BOOL enabled;
   static dispatch_once_t onceToken;

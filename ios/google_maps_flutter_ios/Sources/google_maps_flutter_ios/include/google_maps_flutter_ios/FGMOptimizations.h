@@ -20,6 +20,12 @@ BOOL FGMOptAccessibilityBatchEnabled(void);
 /// to every marker that asks for an equal descriptor, instead of making it again per marker.
 BOOL FGMOptIconCacheEnabled(void);
 
+/// `FGM_OPT_ICON_DESCRIPTION`: a cached icon answers `-description` with a string made once.
+/// When the SDK draws a marker that is new or has changed it asks the marker's image for its
+/// description, and `UIImage` formats that string anew on every call; with a thousand markers
+/// changed in a pan that was a third of the SDK's drawing. Needs `FGM_OPT_ICON_CACHE`.
+BOOL FGMOptIconDescriptionEnabled(void);
+
 /// `FGM_OPT_CHUNKED_BATCH`: apply a marker batch in slices of a few milliseconds with the run loop
 /// turning between them, so that the map answers touches and draws while the markers arrive,
 /// instead of in one piece on the main thread.
