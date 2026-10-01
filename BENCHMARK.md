@@ -261,6 +261,7 @@ median (minimum to maximum). "One piece" is `FGM_OPT_CHUNKED_BATCH=0`.
 | `ce23959`, `FGM_OPT_SKIP_UNCHANGED=0`, recycling on | 284 (276–316) | 843 (831–911) | 56 (43–73) | 0.186 |
 | `ce23959`, `FGM_OPT_NEAREST_FIRST=0` | 47 (40–66) | 162 (154–264) | 50 (38–61) | 0.035 |
 | `ce23959`, one piece | 179 (136–204) | 179 | 239 (222–334) | 0.117 |
+| `64264ba`, all on (2026-10-01) | 54 (48–69) | 194 (150–222) | 52 (40–57) | 0.035 |
 
 - The batch in one piece held the main thread for 0.39 s, not for the 0.21 s of `total_ms`: the
   SDK draws every marker that changed in the frame after the batch, and its usage log flushes
@@ -287,6 +288,17 @@ main-thread samples between the batch arriving and its last marker, 102 are the 
 the Pigeon handler (decoding, merging, ordering, first slice) and 4 the SDK's usage log. The same
 pan on `3708123`: one hang of 325 ms, the usage log 249 ms (173 inside the batch, in
 `-[GMSMapsSDKLogger addEvent:]` under every attach and detach, 76 on the main queue after it).
+
+First load of the 5000-school country on `64264ba`, one batch of 5000 adds: in one piece
+717 ms in the plugin and a gap of 1209 ms; in slices 1190 ms of plugin work, 3951 ms to the last
+marker (145 slices, one per frame) and a longest gap of 198 ms, which is the Dart side and the
+Pigeon decoding before the first slice.
+
+Visual check on `64264ba` (the RedMap test country with every pin kind, zoom 8, 11 and 13):
+with every switch of this work off against all on, 0 of 3 053 568 pixels differ on each of the
+three screenshots. A pan into the rows of visited schools of the 5000-school country recycled
+438 markers from one pin kind into another; the screenshot shows the right rows red, the rest
+green, nothing left behind.
 
 Native tests (`example/ios/RunnerTests`, iPhone 16 simulator, iOS 18.3.1) on `64264ba`: 109
 tests in 12 suites passed; 27 are new with this work (the queue, the slices, recycling, skip
