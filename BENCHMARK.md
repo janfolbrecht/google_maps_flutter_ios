@@ -32,7 +32,7 @@ does what upstream does. They are set the way `FGM_PERF` is; from the command li
 
 The later optimisations have their switches too: `FGM_OPT_CHUNKED_BATCH`, `FGM_OPT_NEAREST_FIRST`,
 `FGM_OPT_RECYCLE_MARKERS`, `FGM_OPT_SKIP_UNCHANGED`, `FGM_OPT_ICON_DESCRIPTION` (each off with
-`0`), and two knobs of the slices: `FGM_OPT_CHUNK_BUDGET_MS=<milliseconds per slice>` (8) and
+`0`), and two knobs of the slices: `FGM_OPT_CHUNK_BUDGET_MS=<milliseconds per slice>` (25; the numbers below were measured with 8) and
 `FGM_OPT_CHUNK_PACING=queue` (a slice per turn of the main queue instead of one per frame).
 Recycling happens only inside a batch applied in slices; to see it without slices give the
 slices a budget no batch reaches (`FGM_OPT_CHUNK_BUDGET_MS=100000`).

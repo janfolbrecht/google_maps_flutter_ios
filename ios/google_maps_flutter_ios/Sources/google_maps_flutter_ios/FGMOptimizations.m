@@ -80,7 +80,7 @@ CFTimeInterval FGMOptChunkBudget(void) {
   dispatch_once(&onceToken, ^{
     double milliseconds =
         [NSProcessInfo.processInfo.environment[@"FGM_OPT_CHUNK_BUDGET_MS"] doubleValue];
-    budget = (milliseconds > 0 ? milliseconds : 8.0) / 1000.0;
+    budget = (milliseconds > 0 ? milliseconds : 25.0) / 1000.0;
   });
   return budget;
 }

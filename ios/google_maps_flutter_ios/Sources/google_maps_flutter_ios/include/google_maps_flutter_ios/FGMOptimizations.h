@@ -49,7 +49,7 @@ BOOL FGMOptRecycleMarkersEnabled(void);
 /// usage event for several of the setters whatever the value.
 BOOL FGMOptSkipUnchangedEnabled(void);
 
-/// `FGM_OPT_CHUNK_BUDGET_MS`: the time one slice of a chunked batch may take, in seconds. 8 ms
+/// `FGM_OPT_CHUNK_BUDGET_MS`: the time one slice of a chunked batch may take, in seconds. 25 ms
 /// unless the variable holds another positive number of milliseconds. A knob for measuring.
 CFTimeInterval FGMOptChunkBudget(void);
 

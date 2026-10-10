@@ -74,7 +74,7 @@ The fork proceeds in the order: **measure first, then optimise only what the num
 8. **`FGM_OPT_CHUNKED_BATCH`** (`FGMMarkerController.m`, `updateMarkersInSlicesByAdding:`;
    `FGMMarkerBatchQueue`). A batch of more than 50 marker operations is applied in slices: the
    first within the Pigeon call, the following ones one per frame of the display
-   (`CADisplayLink`), each for `FGM_OPT_CHUNK_BUDGET_MS` (8 ms), so the map answers touches and
+   (`CADisplayLink`), each for `FGM_OPT_CHUNK_BUDGET_MS` (25 ms; 8 ms until RedMap 4.0.22), so the map answers touches and
    draws while the markers arrive. One slice per frame, not per turn of the main queue, because
    the SDK draws on the main thread whatever changed since its last frame, and that costs more
    than changing it did (`FGM_OPT_CHUNK_PACING=queue` is the other pacing, kept for measuring).
